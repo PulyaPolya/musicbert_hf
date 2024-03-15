@@ -1,0 +1,6 @@
+numpy
+torch
+omegaconf
+lovely-tensors
+transformers
+pytest

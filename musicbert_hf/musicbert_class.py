@@ -14,12 +14,14 @@ from transformers.utils import (
     add_start_docstrings_to_model_forward,
     add_code_sample_docstrings,
 )
-from transformers.modeling_outputs import MaskedLMOutput
-from typing import Optional, Tuple, Union, List
+from transformers.modeling_outputs import MaskedLMOutput, TokenClassifierOutput
+from typing import Optional, Sequence, Tuple, Union, List
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import CrossEntropyLoss
+
+from musicbert_hf import from_fairseq
 
 logger = logging.get_logger(__name__)
 
@@ -125,10 +127,17 @@ class CompoundEmbeddings(BertEmbeddings):
 
 
 class MusicBertEncoder(BertModel):
-    def __init__(self, config, *, compound_ratio: int = 8, add_pooling_layer=False):
+    def __init__(
+        self,
+        config,
+        *,
+        compound_ratio: int = 8,
+        add_pooling_layer=False,
+        upsample: bool = True,
+    ):
         super().__init__(config, add_pooling_layer=add_pooling_layer)
         self.config = config
-        self.embeddings = CompoundEmbeddings(config)
+        self.embeddings = CompoundEmbeddings(config, upsample=upsample)
         self.encoder = BertEncoder(config)
         self.compound_ratio = compound_ratio
 
@@ -192,7 +201,7 @@ class MusicBertEncoder(BertModel):
 
 
 @add_start_docstrings(
-    """Bert Model with a `language modeling` head on top.""", BERT_START_DOCSTRING
+    """MusicBert model for MLM pre-training task.""", BERT_START_DOCSTRING
 )
 class MusicBert(BertPreTrainedModel):
     # (Malcolm 2024-03-12) BertForMaskedLM defines the following attributes. However,
@@ -273,8 +282,9 @@ class MusicBert(BertPreTrainedModel):
 
         masked_lm_loss = None
         if labels is not None:
-            # TODO: (Malcolm 2024-03-15) I think we want to set padding index
-            #   to 1 to match MusicBert implementation
+            # TODO: (Malcolm 2024-03-15) We either want to set padding index
+            #   to 1 to match MusicBert implementation, or replace 1 with -100
+            #   in the labels
             loss_fct = CrossEntropyLoss()  # -100 index = padding token
             masked_lm_loss = loss_fct(
                 prediction_scores.view(-1, self.config.vocab_size), labels.view(-1)
@@ -317,3 +327,283 @@ class MusicBert(BertPreTrainedModel):
         input_ids = torch.cat([input_ids, dummy_token], dim=1)
 
         return {"input_ids": input_ids, "attention_mask": attention_mask}
+
+
+class RobertaSequenceTaggingHead(nn.Module):
+    """Head for sequence tagging/token-level classification tasks."""
+
+    def __init__(
+        self,
+        input_dim,
+        inner_dim,
+        num_classes,
+        activation_fn,
+        pooler_dropout,
+        q_noise=0,
+        qn_block_size=8,
+        do_spectral_norm=False,
+    ):
+        super().__init__()
+        self.dense = nn.Linear(input_dim, inner_dim)
+        self.activation_fn = from_fairseq.get_activation_fn(activation_fn)
+        self.dropout = nn.Dropout(p=pooler_dropout)
+        if q_noise != 0:
+            raise NotImplementedError
+        self.out_proj = nn.Linear(inner_dim, num_classes)
+        if do_spectral_norm:
+            if q_noise != 0:
+                raise NotImplementedError(
+                    "Attempting to use Spectral Normalization with Quant Noise. "
+                    "This is not officially supported"
+                )
+            self.out_proj = torch.nn.utils.spectral_norm(self.out_proj)
+
+    def forward(self, features, **kwargs):
+        x = features
+        # TODO: (Malcolm 2023-09-05)
+        # https://github.com/facebookresearch/fairseq/pull/1709/files#r381391530
+        # Would it make sense to add layer_norm here just like in the RobertaLMHead?
+        x = self.dropout(x)
+        x = self.dense(x)
+        x = self.activation_fn(x)
+        x = self.dropout(x)
+        x = self.out_proj(x)
+        return x
+
+
+class MusicBertForTokenClassification(BertPreTrainedModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.num_labels = config.num_labels
+        if config.is_decoder:
+            logger.warning(
+                "If you want to use `MusicBert` make sure `config.is_decoder=False` for "
+                "bi-directional self-attention."
+            )
+        assert (
+            not config.tie_word_embeddings
+        ), "`tie_word_embeddings` is not implemented"
+
+        self.bert = MusicBertEncoder(config, add_pooling_layer=False, upsample=False)
+
+        classifier_dropout = (
+            config.classifier_dropout
+            if config.classifier_dropout is not None
+            else config.hidden_dropout_prob
+        )
+        # self.dropout = nn.Dropout(classifier_dropout)
+        self.classifier = RobertaSequenceTaggingHead(
+            input_dim=config.hidden_size,
+            inner_dim=config.hidden_size,
+            num_classes=config.num_labels,
+            activation_fn=config.classifier_activation,
+            pooler_dropout=classifier_dropout,
+        )
+
+        # Initialize weights and apply final processing
+        self.post_init()
+
+    @add_start_docstrings_to_model_forward(
+        BERT_INPUTS_DOCSTRING.format("batch_size, sequence_length")
+    )
+    def forward(
+        self,
+        input_ids: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        token_type_ids: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
+        head_mask: Optional[torch.Tensor] = None,
+        inputs_embeds: Optional[torch.Tensor] = None,
+        labels: Optional[torch.Tensor] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+    ) -> Union[Tuple[torch.Tensor], TokenClassifierOutput]:
+        r"""
+        labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
+            Labels for computing the token classification loss. Indices should be in `[0, ..., config.num_labels - 1]`.
+        """
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
+        )
+
+        outputs = self.bert(
+            input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
+            head_mask=head_mask,
+            inputs_embeds=inputs_embeds,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+
+        sequence_output = outputs[0]
+
+        # TODO: (Malcolm 2024-03-16) do we want to add dropout here?
+        # sequence_output = self.dropout(sequence_output)
+        logits = self.classifier(sequence_output)
+
+        loss = None
+        if labels is not None:
+            # TODO: (Malcolm 2024-03-15) We either want to set padding index
+            #   to 1 to match MusicBert implementation, or replace 1 with -100
+            #   in the labels
+            loss_fct = CrossEntropyLoss()
+            loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+
+        if not return_dict:
+            output = (logits,) + outputs[2:]
+            return ((loss,) + output) if loss is not None else output
+
+        return TokenClassifierOutput(
+            loss=loss,
+            logits=logits,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+        )
+
+
+class RobertaSequenceMultiTaggingHead(nn.Module):
+    """Head for sequence tagging/token-level classification tasks."""
+
+    def __init__(
+        self,
+        input_dim,
+        inner_dim,
+        num_classes: Sequence[int],
+        activation_fn,
+        pooler_dropout,
+        q_noise=0,
+        qn_block_size=8,
+        do_spectral_norm=False,
+    ):
+        super().__init__()
+        sub_heads = []
+        for n_class in num_classes:
+            sub_heads.append(
+                RobertaSequenceTaggingHead(
+                    input_dim,
+                    inner_dim,
+                    n_class,
+                    activation_fn,
+                    pooler_dropout,
+                    q_noise,
+                    qn_block_size,
+                    do_spectral_norm,
+                )
+            )
+        self.n_heads = len(sub_heads)
+        self.multi_tag_sub_heads = nn.ModuleList(sub_heads)
+
+    def forward(self, features, **kwargs):
+        x = [sub_head(features) for sub_head in self.multi_tag_sub_heads]
+        return x
+
+
+class MusicBertForMultiTargetTokenClassification(BertPreTrainedModel):
+    def __init__(self, config):
+        super().__init__(config)
+        # TODO: (Malcolm 2024-03-16) is it going to cause any issues if num_labels is a
+        #   sequence here?
+        self.num_labels = config.num_multi_labels
+        if config.is_decoder:
+            logger.warning(
+                "If you want to use `MusicBert` make sure `config.is_decoder=False` for "
+                "bi-directional self-attention."
+            )
+        assert (
+            not config.tie_word_embeddings
+        ), "`tie_word_embeddings` is not implemented"
+
+        self.bert = MusicBertEncoder(config, add_pooling_layer=False, upsample=False)
+
+        classifier_dropout = (
+            config.classifier_dropout
+            if config.classifier_dropout is not None
+            else config.hidden_dropout_prob
+        )
+        # TODO: (Malcolm 2024-03-16) verify that fairseq doesn't implement dropout here
+        # self.dropout = nn.Dropout(classifier_dropout)
+        # self.classifier = nn.Linear(config.hidden_size, config.num_labels)
+        self.classifier = RobertaSequenceMultiTaggingHead(
+            input_dim=config.hidden_size,
+            inner_dim=config.hidden_size,
+            num_classes=config.num_multi_labels,
+            activation_fn=config.classifier_activation,
+            pooler_dropout=classifier_dropout,
+        )
+
+        # Initialize weights and apply final processing
+        self.post_init()
+
+    @add_start_docstrings_to_model_forward(
+        BERT_INPUTS_DOCSTRING.format("batch_size, sequence_length")
+    )
+    def forward(
+        self,
+        input_ids: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        token_type_ids: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
+        head_mask: Optional[torch.Tensor] = None,
+        inputs_embeds: Optional[torch.Tensor] = None,
+        labels: Optional[torch.Tensor] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+    ) -> Union[Tuple[torch.Tensor], TokenClassifierOutput]:
+        r"""
+        labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
+            Labels for computing the token classification loss. Indices should be in `[0, ..., config.num_labels - 1]`.
+        """
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
+        )
+
+        outputs = self.bert(
+            input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
+            head_mask=head_mask,
+            inputs_embeds=inputs_embeds,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+
+        sequence_output = outputs[0]
+
+        # TODO: (Malcolm 2024-03-16) do we want to add dropout here?
+        # sequence_output = self.dropout(sequence_output)
+        logits = self.classifier(sequence_output)
+
+        loss = None
+        if labels is not None:
+            # TODO: (Malcolm 2024-03-15) We either want to set padding index
+            #   to 1 to match MusicBert implementation, or replace 1 with -100
+            #   in the labels
+            loss_fct = CrossEntropyLoss()
+            losses = []
+            for these_logits, these_labels, num_labels in zip(
+                logits, labels, self.num_labels
+            ):
+                this_loss = loss_fct(
+                    these_logits.view(-1, num_labels), these_labels.view(-1)
+                )
+                losses.append(this_loss)
+            loss = torch.stack(losses).mean()
+
+        if not return_dict:
+            raise NotImplementedError
+            output = (logits,) + outputs[2:]
+            return ((loss,) + output) if loss is not None else output
+
+        return TokenClassifierOutput(
+            loss=loss,
+            logits=logits,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+        )

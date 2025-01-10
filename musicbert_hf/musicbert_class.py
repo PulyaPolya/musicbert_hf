@@ -1,25 +1,26 @@
-from transformers import BertConfig, BertPreTrainedModel, BertModel
+from typing import List, Optional, Sequence, Tuple, Union
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.nn import CrossEntropyLoss
+from transformers import BertConfig, BertModel, BertPreTrainedModel
+from transformers.modeling_outputs import MaskedLMOutput, TokenClassifierOutput
 from transformers.models.bert.modeling_bert import (
-    BERT_START_DOCSTRING,
-    BERT_INPUTS_DOCSTRING,
     _CHECKPOINT_FOR_DOC,
     _CONFIG_FOR_DOC,
+    BERT_INPUTS_DOCSTRING,
+    BERT_START_DOCSTRING,
     BertEmbeddings,
     BertEncoder,
     BertOnlyMLMHead,
 )
 from transformers.utils import (
-    add_start_docstrings,
-    logging,
-    add_start_docstrings_to_model_forward,
     add_code_sample_docstrings,
+    add_start_docstrings,
+    add_start_docstrings_to_model_forward,
+    logging,
 )
-from transformers.modeling_outputs import MaskedLMOutput, TokenClassifierOutput
-from typing import Optional, Sequence, Tuple, Union, List
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.nn import CrossEntropyLoss
 
 from musicbert_hf import from_fairseq
 
@@ -66,20 +67,20 @@ class CompoundEmbeddings(BertEmbeddings):
         batch, compound_seq = input_ids.shape
         ratio = self.compound_ratio
 
-        assert (
-            not past_key_values_length
-        ), "past_key_values_length not supported for compound mode"
-        assert (
-            compound_seq % ratio == 0
-        ), f"token sequences length should be multiple of {ratio} for compound mode"
+        assert not past_key_values_length, (
+            "past_key_values_length not supported for compound mode"
+        )
+        assert compound_seq % ratio == 0, (
+            f"token sequences length should be multiple of {ratio} for compound mode"
+        )
 
         seq = compound_seq // ratio
         # (Malcolm 2024-02-20) I'm not sure what the motivation for this assertion
         #   is, hidden states for intermediate layers seem to work as normal.
         # assert last_state_only, "hidden states not available for compound mode"
-        assert (
-            position_ids is None
-        ), "custom position_ids are not supported for compound mode"
+        assert position_ids is None, (
+            "custom position_ids are not supported for compound mode"
+        )
 
         # (Malcolm 2024-03-13) unlike the fairseq implementation, we give position
         #   ids to padding tokens but I don't think this should matter since we
@@ -87,12 +88,10 @@ class CompoundEmbeddings(BertEmbeddings):
         # (Malcolm 2024-03-15) fairseq begins position ids from 2
         position_ids = self.position_ids[:, 2 : seq + 2]
 
-        assert (
-            inputs_embeds is None
-        ), "inputs_embeds are not supported for compound mode"
-        assert (
-            token_type_ids is None
-        ) or not token_type_ids.any(), (
+        assert inputs_embeds is None, (
+            "inputs_embeds are not supported for compound mode"
+        )
+        assert (token_type_ids is None) or not token_type_ids.any(), (
             "token_type_ids are not supported for compound mode"
         )
 
@@ -169,9 +168,9 @@ class MusicBertEncoder(BertModel):
             assert input_ids is not None
 
             batch_size, compound_seq = input_ids.shape
-            assert (
-                compound_seq % self.compound_ratio == 0
-            ), f"token sequences length should be multiple of {self.compound_ratio} for compound mode"
+            assert compound_seq % self.compound_ratio == 0, (
+                f"token sequences length should be multiple of {self.compound_ratio} for compound mode"
+            )
             seq = compound_seq // self.compound_ratio
             assert past_key_values is None
             attention_mask = torch.ones(((batch_size, seq)), device=input_ids.device)
@@ -216,9 +215,9 @@ class MusicBert(BertPreTrainedModel):
                 "If you want to use `MusicBert` make sure `config.is_decoder=False` for "
                 "bi-directional self-attention."
             )
-        assert (
-            not config.tie_word_embeddings
-        ), "`tie_word_embeddings` is not implemented"
+        assert not config.tie_word_embeddings, (
+            "`tie_word_embeddings` is not implemented"
+        )
 
         self.bert = MusicBertEncoder(config, add_pooling_layer=False)
         self.cls = BertOnlyMLMHead(config)
@@ -380,9 +379,9 @@ class MusicBertForTokenClassification(BertPreTrainedModel):
                 "If you want to use `MusicBert` make sure `config.is_decoder=False` for "
                 "bi-directional self-attention."
             )
-        assert (
-            not config.tie_word_embeddings
-        ), "`tie_word_embeddings` is not implemented"
+        assert not config.tie_word_embeddings, (
+            "`tie_word_embeddings` is not implemented"
+        )
 
         self.bert = MusicBertEncoder(config, add_pooling_layer=False, upsample=False)
 
@@ -502,7 +501,7 @@ class RobertaSequenceMultiTaggingHead(nn.Module):
         return x
 
 
-class MusicBertForMultiTargetTokenClassification(BertPreTrainedModel):
+class MusicBertForMultiTaskTokenClassification(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         # TODO: (Malcolm 2024-03-16) is it going to cause any issues if num_labels is a
@@ -513,9 +512,9 @@ class MusicBertForMultiTargetTokenClassification(BertPreTrainedModel):
                 "If you want to use `MusicBert` make sure `config.is_decoder=False` for "
                 "bi-directional self-attention."
             )
-        assert (
-            not config.tie_word_embeddings
-        ), "`tie_word_embeddings` is not implemented"
+        assert not config.tie_word_embeddings, (
+            "`tie_word_embeddings` is not implemented"
+        )
 
         self.bert = MusicBertEncoder(config, add_pooling_layer=False, upsample=False)
 
@@ -602,7 +601,7 @@ class MusicBertForMultiTargetTokenClassification(BertPreTrainedModel):
             return ((loss,) + output) if loss is not None else output
 
         return TokenClassifierOutput(
-            loss=loss,
+            loss=loss,  # type:ignore
             logits=logits,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,

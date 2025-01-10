@@ -1,10 +1,11 @@
 import os
+
 import pytest
 import torch
 
 from musicbert_hf.checkpoints import (
     load_musicbert_from_fairseq_checkpoint,
-    load_musicbert_multi_target_token_classifier_from_fairseq_checkpoint,
+    load_musicbert_multitask_token_classifier_from_fairseq_checkpoint,
     load_musicbert_token_classifier_from_fairseq_checkpoint,
 )
 
@@ -14,7 +15,9 @@ BASE_CHECKPOINT = os.getenv("BASE_CHECKPOINT")
 SMALL_TOKEN_CLS = os.getenv("SMALL_TOKEN_CLS")
 SMALL_TOKEN_MULTI_CLS = os.getenv("SMALL_TOKEN_MULTI_CLS")
 
-RESOURCES_DIR = os.path.join(os.path.dirname((os.path.realpath(__file__))), "resources")
+FAIRSEQ_OUTPUT_DIR = os.path.join(
+    os.path.dirname((os.path.realpath(__file__))), "fairseq_outputs"
+)
 
 """
 To get fairseq outputs:
@@ -29,7 +32,6 @@ python /Users/malcolm/google_drive/python/data_science/musicbert_fork/misc_scrip
 def _do_load(
     arch, checkpoint_path, load_f, fairseq_output_path, sample_input, sample_labels
 ):
-
     model = load_f(checkpoint_path)
     model.eval()
 
@@ -44,7 +46,6 @@ def _do_load(
         for hf_out, fairseq_out in zip(hf_output, fairseq_output):
             torch.isclose(hf_out, fairseq_out, atol=5).all()
     else:
-
         assert torch.isclose(hf_output, fairseq_output, atol=5).all()
 
 
@@ -58,7 +59,7 @@ def _mlm_input_and_labels():
     SMALL_CHECKPOINT is None, reason="SMALL_CHECKPOINT environment variable unset"
 )
 def test_load_small_checkpoint():
-    fairseq_output_path = os.path.join(RESOURCES_DIR, f"fairseq_small_320.pt")
+    fairseq_output_path = os.path.join(FAIRSEQ_OUTPUT_DIR, "fairseq_small_320.pt")
     _do_load(
         "small",
         SMALL_CHECKPOINT,
@@ -93,7 +94,7 @@ def _token_class_input_and_labels():
     SMALL_TOKEN_CLS is None, reason="SMALL_TOKEN_CLS environment variable unset"
 )
 def test_load_small_token_classifier():
-    fairseq_output_path = os.path.join(RESOURCES_DIR, f"fairseq_token_small_320.pt")
+    fairseq_output_path = os.path.join(FAIRSEQ_OUTPUT_DIR, "fairseq_token_small_320.pt")
     _do_load(
         "small",
         SMALL_TOKEN_CLS,
@@ -114,14 +115,14 @@ def _token_multi_class_input_and_labels():
     SMALL_TOKEN_MULTI_CLS is None,
     reason="SMALL_TOKEN_MULTI_CLS environment variable unset",
 )
-def test_load_small_multi_target_token_classifier():
+def test_load_small_multitask_token_classifier():
     fairseq_output_path = os.path.join(
-        RESOURCES_DIR, f"fairseq_token_multi_small_320.pt"
+        FAIRSEQ_OUTPUT_DIR, "fairseq_token_multi_small_320.pt"
     )
     _do_load(
         "small",
         SMALL_TOKEN_MULTI_CLS,
-        load_musicbert_multi_target_token_classifier_from_fairseq_checkpoint,
+        load_musicbert_multitask_token_classifier_from_fairseq_checkpoint,
         fairseq_output_path,
         *_token_multi_class_input_and_labels(),
     )

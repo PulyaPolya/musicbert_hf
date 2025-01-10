@@ -1,15 +1,15 @@
 import itertools
 from typing import Type, TypeVar
-import torch
-
-from transformers import BertConfig, BertPreTrainedModel
-from musicbert_hf.musicbert_class import (
-    MusicBert,
-    MusicBertForMultiTargetTokenClassification,
-    MusicBertForTokenClassification,
-)
 
 import lovely_tensors
+import torch
+from transformers import BertConfig, BertPreTrainedModel
+
+from musicbert_hf.musicbert_class import (
+    MusicBert,
+    MusicBertForMultiTaskTokenClassification,
+    MusicBertForTokenClassification,
+)
 
 T = TypeVar("T", bound=BertPreTrainedModel)
 
@@ -25,7 +25,6 @@ def _load_from_checkpoint(
     print_state_dicts: bool = False,
     **config_kwargs,
 ) -> T:
-
     max_positions = model_config.max_positions
     d_model = model_config.encoder_embed_dim
     d_ff = model_config.encoder_ffn_embed_dim
@@ -266,10 +265,10 @@ def load_musicbert_token_classifier_from_fairseq_checkpoint(
     )
 
 
-def load_musicbert_multi_target_token_classifier_from_fairseq_checkpoint(
+def load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
     checkpoint_path: str,
     print_missing_keys: bool = False,
-) -> MusicBertForMultiTargetTokenClassification:
+) -> MusicBertForMultiTaskTokenClassification:
     ckpt_state_dict = torch.load(checkpoint_path)
 
     config = ckpt_state_dict["cfg"]
@@ -277,19 +276,28 @@ def load_musicbert_multi_target_token_classifier_from_fairseq_checkpoint(
     src_state_dict = ckpt_state_dict["model"]
     num_labels = []
     parameter_mapping = {}
+
+    if (
+        "classification_heads.sequence_multitarget_tagging_head.multi_tag_sub_heads.0.out_proj.bias"
+        in src_state_dict
+    ):
+        multi_label = "multitarget"  # for backwards compatibility
+    else:
+        multi_label = "multitask"
+
     for i in itertools.count():
         layer = src_state_dict.get(
-            f"classification_heads.sequence_multitarget_tagging_head.multi_tag_sub_heads.{i}.out_proj.bias",
+            f"classification_heads.sequence_{multi_label}_tagging_head.multi_tag_sub_heads.{i}.out_proj.bias",
             None,
         )
         if layer is None:
             break
         num_labels.append(layer.shape[0])
         parameter_mapping |= {
-            f"classification_heads.sequence_multitarget_tagging_head.multi_tag_sub_heads.{i}.dense.weight": f"classifier.multi_tag_sub_heads.{i}.dense.weight",
-            f"classification_heads.sequence_multitarget_tagging_head.multi_tag_sub_heads.{i}.dense.bias": f"classifier.multi_tag_sub_heads.{i}.dense.bias",
-            f"classification_heads.sequence_multitarget_tagging_head.multi_tag_sub_heads.{i}.out_proj.weight": f"classifier.multi_tag_sub_heads.{i}.out_proj.weight",
-            f"classification_heads.sequence_multitarget_tagging_head.multi_tag_sub_heads.{i}.out_proj.bias": f"classifier.multi_tag_sub_heads.{i}.out_proj.bias",
+            f"classification_heads.sequence_{multi_label}_tagging_head.multi_tag_sub_heads.{i}.dense.weight": f"classifier.multi_tag_sub_heads.{i}.dense.weight",
+            f"classification_heads.sequence_{multi_label}_tagging_head.multi_tag_sub_heads.{i}.dense.bias": f"classifier.multi_tag_sub_heads.{i}.dense.bias",
+            f"classification_heads.sequence_{multi_label}_tagging_head.multi_tag_sub_heads.{i}.out_proj.weight": f"classifier.multi_tag_sub_heads.{i}.out_proj.weight",
+            f"classification_heads.sequence_{multi_label}_tagging_head.multi_tag_sub_heads.{i}.out_proj.bias": f"classifier.multi_tag_sub_heads.{i}.out_proj.bias",
         }
     assert num_labels
     classifier_dropout = model_config.pooler_dropout
@@ -306,7 +314,7 @@ def load_musicbert_multi_target_token_classifier_from_fairseq_checkpoint(
     return _load_from_checkpoint(
         model_config,
         src_state_dict,
-        model_cls=MusicBertForMultiTargetTokenClassification,  # type:ignore
+        model_cls=MusicBertForMultiTaskTokenClassification,  # type:ignore
         print_missing_keys=print_missing_keys,
         parameter_mapping=parameter_mapping,
         expected_missing_src_keys=expected_missing_src_keys,

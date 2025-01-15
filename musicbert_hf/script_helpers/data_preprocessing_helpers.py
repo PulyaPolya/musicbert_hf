@@ -28,6 +28,12 @@ class Config:
             )
             logging.info(f"Using default events vocab from {self.vocabs['events']}")
 
+        self.input_base_folder = os.path.expanduser(self.input_base_folder)
+        self.output_base_folder = os.path.expanduser(self.output_base_folder)
+
+        for key in self.vocabs:
+            self.vocabs[key] = os.path.expanduser(self.vocabs[key])
+
     @property
     def train_input_folder(self):
         return os.path.join(self.input_base_folder, "train")

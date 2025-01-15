@@ -8,6 +8,7 @@ from musicbert_hf.checkpoints import (
     load_musicbert_multitask_token_classifier_from_fairseq_checkpoint,
     load_musicbert_token_classifier_from_fairseq_checkpoint,
 )
+from musicbert_hf.utils import zip_longest_with_error
 
 SMALL_CHECKPOINT = os.getenv("SMALL_CHECKPOINT")
 BASE_CHECKPOINT = os.getenv("BASE_CHECKPOINT")
@@ -30,12 +31,22 @@ python /Users/malcolm/google_drive/python/data_science/musicbert_fork/misc_scrip
 
 
 def _do_load(
-    arch, checkpoint_path, load_f, fairseq_output_path, sample_input, sample_labels
+    arch,
+    checkpoint_path,
+    load_f,
+    fairseq_output_path,
+    sample_input,
+    sample_labels,
+    sample_attention_mask=None,
 ):
     model = load_f(checkpoint_path)
     model.eval()
 
-    result = model(input_ids=sample_input, labels=sample_labels)
+    result = model(
+        input_ids=sample_input,
+        labels=sample_labels,
+        attention_mask=sample_attention_mask,
+    )
     hf_output = result.logits
 
     fairseq_output = torch.load(fairseq_output_path)
@@ -43,7 +54,7 @@ def _do_load(
     if isinstance(hf_output, list):
         assert isinstance(fairseq_output, list)
         assert len(hf_output) == len(fairseq_output)
-        for hf_out, fairseq_out in zip(hf_output, fairseq_output):
+        for hf_out, fairseq_out in zip_longest_with_error(hf_output, fairseq_output):
             torch.isclose(hf_out, fairseq_out, atol=5).all()
     else:
         assert torch.isclose(hf_output, fairseq_output, atol=5).all()
@@ -108,7 +119,12 @@ def _token_multi_class_input_and_labels():
     sample_input = torch.arange(320).reshape(1, -1)
     # sample_labels should have 1/8 the seq length of sample_input
     sample_labels = torch.tile(torch.arange(2), (20,)).reshape(1, -1)
-    return sample_input, sample_labels
+    sample_attention_mask = torch.zeros_like(sample_labels)
+    sample_attention_mask[0, :18] = 1
+
+    # 11 tasks in test model
+    sample_labels = [sample_labels for _ in range(11)]
+    return sample_input, sample_labels, sample_attention_mask
 
 
 @pytest.mark.skipif(

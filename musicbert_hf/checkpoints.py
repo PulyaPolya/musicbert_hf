@@ -273,6 +273,7 @@ def load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
 
     config = ckpt_state_dict["cfg"]
     model_config = config["model"]
+
     src_state_dict = ckpt_state_dict["model"]
     num_labels = []
     parameter_mapping = {}

@@ -24,6 +24,10 @@ from transformers.utils import (
 
 from musicbert_hf import from_fairseq
 
+# MonkeyPatch: replace BertModel.forward with our version
+from musicbert_hf.hf_monkeypatch import forward as hf_forward  # noqa: F401
+from musicbert_hf.utils import zip_longest_with_error
+
 logger = logging.get_logger(__name__)
 
 
@@ -281,9 +285,6 @@ class MusicBert(BertPreTrainedModel):
 
         masked_lm_loss = None
         if labels is not None:
-            # TODO: (Malcolm 2024-03-15) We either want to set padding index
-            #   to 1 to match MusicBert implementation, or replace 1 with -100
-            #   in the labels
             loss_fct = CrossEntropyLoss()  # -100 index = padding token
             masked_lm_loss = loss_fct(
                 prediction_scores.view(-1, self.config.vocab_size), labels.view(-1)
@@ -507,6 +508,7 @@ class MusicBertForMultiTaskTokenClassification(BertPreTrainedModel):
         # TODO: (Malcolm 2024-03-16) is it going to cause any issues if num_labels is a
         #   sequence here?
         self.num_labels = config.num_multi_labels
+        self.num_tasks = len(self.num_labels)
         if config.is_decoder:
             logger.warning(
                 "If you want to use `MusicBert` make sure `config.is_decoder=False` for "
@@ -537,6 +539,25 @@ class MusicBertForMultiTaskTokenClassification(BertPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
+    @staticmethod
+    def compute_loss(logits, labels, num_items_in_batch, num_labels):
+        if isinstance(logits, dict):
+            logits = logits["logits"]
+        loss_fct = CrossEntropyLoss()
+        losses = []
+        for these_logits, these_labels, num_labels in zip_longest_with_error(
+            logits, labels, num_labels
+        ):
+            this_loss = loss_fct(
+                these_logits.view(-1, num_labels), these_labels.view(-1)
+            )
+            losses.append(this_loss)
+        if num_items_in_batch is None:
+            num_items_in_batch = 1
+        loss = torch.stack(losses).mean() / num_items_in_batch
+
+        return loss
+
     @add_start_docstrings_to_model_forward(
         BERT_INPUTS_DOCSTRING.format("batch_size, sequence_length")
     )
@@ -548,18 +569,32 @@ class MusicBertForMultiTaskTokenClassification(BertPreTrainedModel):
         position_ids: Optional[torch.Tensor] = None,
         head_mask: Optional[torch.Tensor] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
-        labels: Optional[torch.Tensor] = None,
+        labels: Optional[torch.Tensor] | list[torch.Tensor] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple[torch.Tensor], TokenClassifierOutput]:
         r"""
-        labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
-            Labels for computing the token classification loss. Indices should be in `[0, ..., config.num_labels - 1]`.
+        labels (`torch.LongTensor` of shape `(num_tasks, batch_size, sequence_length)`, *optional*):
+            Labels for computing the token classification loss. Indices should be in `[0, ..., config.num_labels - 1]`. Can also be a list of length `num_tasks` of tensors of shape `(batch_size, sequence_length)`.
         """
         return_dict = (
             return_dict if return_dict is not None else self.config.use_return_dict
         )
+
+        if isinstance(labels, torch.Tensor):
+            assert labels.ndim == 3, (
+                "labels must have shape (num_tasks, batch_size, sequence_length)"
+            )
+            assert labels.shape[0] == self.num_tasks, (
+                "labels must have shape (num_tasks, batch_size, sequence_length)"
+            )
+        elif isinstance(labels, list):
+            assert len(labels) == self.num_tasks, "labels must have length num_tasks"
+            for label in labels:
+                assert label.ndim == 2, (
+                    "labels must have shape (batch_size, sequence_length)"
+                )
 
         outputs = self.bert(
             input_ids,
@@ -581,19 +616,20 @@ class MusicBertForMultiTaskTokenClassification(BertPreTrainedModel):
 
         loss = None
         if labels is not None:
-            # TODO: (Malcolm 2024-03-15) We either want to set padding index
-            #   to 1 to match MusicBert implementation, or replace 1 with -100
-            #   in the labels
-            loss_fct = CrossEntropyLoss()
-            losses = []
-            for these_logits, these_labels, num_labels in zip(
-                logits, labels, self.num_labels
-            ):
-                this_loss = loss_fct(
-                    these_logits.view(-1, num_labels), these_labels.view(-1)
-                )
-                losses.append(this_loss)
-            loss = torch.stack(losses).mean()
+            num_items_in_batch = input_ids.shape[0]
+            loss = self.compute_loss(
+                self.num_labels, logits, labels, num_items_in_batch
+            )
+            # loss_fct = CrossEntropyLoss()
+            # losses = []
+            # for these_logits, these_labels, num_labels in zip_longest_with_error(
+            #     logits, labels, self.num_labels
+            # ):
+            #     this_loss = loss_fct(
+            #         these_logits.view(-1, num_labels), these_labels.view(-1)
+            #     )
+            #     losses.append(this_loss)
+            # loss = torch.stack(losses).mean()
 
         if not return_dict:
             raise NotImplementedError

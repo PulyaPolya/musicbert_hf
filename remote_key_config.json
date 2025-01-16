@@ -1,5 +1,8 @@
 {
   "input_base_folder": "~/project/musicbert_hf/data/raw/",
   "output_base_folder": "~/project/musicbert_hf/data/key_v1/",
-  "features": ["events", "key_pc_mode"]
+  "features": ["events", "key_pc_mode"],
+  "vocabs": {
+    "key_pc_mode": "~/project/musicbert_hf/vocabs/key_pc_mode.txt"
+  }
 }

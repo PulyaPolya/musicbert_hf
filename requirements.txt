@@ -4,3 +4,5 @@ omegaconf
 lovely-tensors
 transformers
 pytest
+pandas
+h5py

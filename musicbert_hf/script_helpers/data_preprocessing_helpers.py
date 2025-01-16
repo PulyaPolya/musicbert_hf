@@ -9,8 +9,8 @@ class Config:
     input_base_folder: str
     output_base_folder: str
     features: list[str]
-    concat_features: list[list[str]]
     vocabs: dict[str, str]
+    concat_features: list[list[str]] = field(default_factory=list)
     feature_must_divide_by: dict[str, int] = field(
         default_factory=lambda: {
             "events": 8,

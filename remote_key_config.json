@@ -1,0 +1,5 @@
+{
+  "input_base_folder": "~/project/musicbert_hf/data/raw/",
+  "output_base_folder": "~/project/musicbert_hf/data/key_v1/",
+  "features": ["events", "key_pc_mode"]
+}

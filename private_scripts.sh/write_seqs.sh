@@ -8,9 +8,9 @@
 
 set -u
 
-if [[ -z "$4" ]]; then
-    echo Error: 4 positional arguments required.
-    echo Usage: bash write_seqs.sh [data_settings] [src_data_dir_or_zip] [output_dir] [n_workers] [-o]
+if [[ -z "$1" ]]; then
+    echo Error: 1 positional arguments required.
+    echo Usage: bash write_seqs.sh [data_preprocessing_config]
     exit 1
 fi
 
@@ -76,8 +76,8 @@ echo eval "${MUSICBERT_HF_ENV}"
 eval "${MUSICBERT_HF_ENV}"
 
 # This is sort of stupid because we are setting the same directories both in this script
-# as RAW_DIR and OUTPUT_DIR and in the remote_data_config.json file as input_base_folder
+# as RAW_DIR and OUTPUT_DIR and in the config file as input_base_folder
 # and output_base_folder.
 
 python scripts/data_preprocessing.py \
-    --config remote_data_config.json
+    --config "${1}"

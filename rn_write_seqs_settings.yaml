@@ -1,7 +1,35 @@
 features:
+  - chord_factors
+  - chord_tone
+  - harmony_onset
+  - bass_pcs
+  - spelling
+  - primary_degree
+  - primary_alteration
+  - secondary_degree
+  - secondary_alteration
   - inversion
+  - mode
+  - key
+  - key_pc
   - quality
+  - granular_key
+  - granular_key_pc
+  - granular_mode
+  - scale_degree
+  - scale_degree_step
+  - scale_degree_alteration
+  - key_signature
+  - granular_key_signature
+  - tonicization
+  - root_pc
 concatenated_features:
+  - [key_pc, mode]
+  - [key_signature, mode]
+  - [granular_key_pc, granular_mode]
+  - [granular_key_signature, granular_mode]
+  - [primary_alteration, primary_degree]
+  - [secondary_alteration, secondary_degree]
   - [primary_alteration, primary_degree, secondary_alteration, secondary_degree]
 corpora_to_exclude:
   - RenDissData

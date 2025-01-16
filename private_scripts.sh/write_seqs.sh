@@ -49,25 +49,10 @@ fi
 #     OUTPUT_DIR=$(readlink -f "${3}")
 # fi
 
-INPUT_DIR=TODO
-RAW_DIR=$(readlink -f ~/project/musicbert_hf/data/raw/)
-OUTPUT_DIR=$(readlink -f ~/project/musicbert_hf/data/rns_v1/)
-
-N_WORKERS="${4}"
-[[ "$5" == "-o" ]] && OVERWRITE=true || OVERWRITE=false
-
-if [[ -d "${OUTPUT_DIR}_raw" ]]; then
-    if $OVERWRITE; then
-        rm -rf "${OUTPUT_DIR}_raw"
-    else
-        echo Error, output_dir "${OUTPUT_DIR}_raw" exists
-        exit 1
-    fi
-fi
-
-if [[ -d "${OUTPUT_DIR}_bin" ]] && $OVERWRITE; then
-    rm -rf "${OUTPUT_DIR}_bin"
-fi
+INPUT_DIR=~/project/raw_data/salami_slice_dedoubled_no_suspensions_q16
+WRITE_SEQS_SETTINGS=~/code/musicbert_hf/rn_write_seqs_settings.yaml
+RAW_DIR=~/project/musicbert_hf/data/raw/
+OUTPUT_DIR=~/project/musicbert_hf/data/rns_v1/
 
 echo eval "${WRITE_SEQS_ENV}"
 eval "${WRITE_SEQS_ENV}"
@@ -82,13 +67,17 @@ fi
 #   be sure it will run
 set -e
 set -x
-cd "${WRITE_SEQS_FOLDER}"
+cd "${INPUT_DIR}"
 python -m write_seqs \
-    --src-data-dir "${SRC_DATA_DIR}" \
-    --data-settings "${DATA_SETTINGS}" --output-dir "${RAW_DIR}" "${@:6}"
+    --src-data-dir "${INPUT_DIR}" \
+    --data-settings "${WRITE_SEQS_SETTINGS}" --output-dir "${OUTPUT_DIR}"
 
 echo eval "${MUSICBERT_HF_ENV}"
 eval "${MUSICBERT_HF_ENV}"
+
+# This is sort of stupid because we are setting the same directories both in this script
+# as RAW_DIR and OUTPUT_DIR and in the remote_data_config.json file as input_base_folder
+# and output_base_folder.
 
 python scripts/data_preprocessing.py \
     --config remote_data_config.json

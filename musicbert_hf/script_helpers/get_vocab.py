@@ -27,6 +27,10 @@ def get_vocab(
             # [token] [count]
             # [token] [count]
             # ...
+            # Some files, for whatever reason, seem to have only
+            # [token]
+            # ...
+            # So we need to handle both cases
             with open(path, "r") as f:
                 # TODO: (Malcolm 2025-01-13) double check these are the right specials
                 return [
@@ -35,9 +39,9 @@ def get_vocab(
                     "<s>",
                     "</s>",
                 ] + [
-                    token.strip()
-                    for (token, count) in [line.split() for line in f.readlines()]
-                    if not token.startswith("madeupword")
+                    line.split()[0].strip()
+                    for line in f.readlines()
+                    if not line.startswith("madeupword")
                 ]
         else:
             logging.info(f"Loading plaintext vocab from {path}")
@@ -49,7 +53,8 @@ def get_vocab(
     logging.info(f"Inferring {feature} vocab from {csv_folder}")
     csv_files = glob.glob(os.path.join(csv_folder, "*.csv"))
     unique_tokens = set(specials)
-    for csv_file in tqdm(csv_files, len(csv_files)):
+    # for csv_file in csv_files:
+    for csv_file in tqdm(csv_files, total=len(csv_files)):
         df = pd.read_csv(csv_file)
         for _, row in df.iterrows():
             unique_tokens.update(row[feature].split())

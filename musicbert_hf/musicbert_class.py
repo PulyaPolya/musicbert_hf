@@ -23,6 +23,7 @@ from transformers.utils import (
 )
 
 from musicbert_hf import from_fairseq
+from musicbert_hf.data import INPUT_PAD
 
 # MonkeyPatch: replace BertModel.forward with our version
 from musicbert_hf.hf_monkeypatch import forward as hf_forward  # noqa: F401
@@ -56,6 +57,11 @@ class CompoundEmbeddings(BertEmbeddings):
         self.position_embeddings = nn.Embedding(
             config.max_position_embeddings, config.hidden_size, padding_idx=1
         )
+        if hasattr(self, "token_type_ids"):
+            # BertModel.forward (or the monkeypatched version) checks for
+            #   a token_type_ids attribute and then does things we don't want
+            #   if it finds it, so we make sure it doesn't exist.
+            delattr(self, "token_type_ids")
 
     def forward(
         self,
@@ -371,10 +377,17 @@ class RobertaSequenceTaggingHead(nn.Module):
         return x
 
 
+class MusicBertTokenClassificationConfig(BertConfig):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.num_labels = kwargs.get("num_labels", 1)
+
+
 class MusicBertForTokenClassification(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
+
         if config.is_decoder:
             logger.warning(
                 "If you want to use `MusicBert` make sure `config.is_decoder=False` for "
@@ -402,6 +415,18 @@ class MusicBertForTokenClassification(BertPreTrainedModel):
 
         # Initialize weights and apply final processing
         self.post_init()
+
+    @staticmethod
+    def compute_loss(logits, labels, num_items_in_batch, num_labels):
+        if isinstance(logits, dict):
+            # HuggingFace uses `TokenClassifierOutput` which is a dict subtype
+            logits = logits["logits"]
+        loss_fct = CrossEntropyLoss()
+        loss = loss_fct(logits.view(-1, num_labels), labels.view(-1))
+        if num_items_in_batch is None:
+            num_items_in_batch = 1
+
+        return loss / num_items_in_batch
 
     @add_start_docstrings_to_model_forward(
         BERT_INPUTS_DOCSTRING.format("batch_size, sequence_length")
@@ -447,11 +472,9 @@ class MusicBertForTokenClassification(BertPreTrainedModel):
 
         loss = None
         if labels is not None:
-            # TODO: (Malcolm 2024-03-15) We either want to set padding index
-            #   to 1 to match MusicBert implementation, or replace 1 with -100
-            #   in the labels
-            loss_fct = CrossEntropyLoss()
-            loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+            loss = self.compute_loss(
+                logits, labels, num_items_in_batch=None, num_labels=self.num_labels
+            )
 
         if not return_dict:
             output = (logits,) + outputs[2:]
@@ -500,6 +523,12 @@ class RobertaSequenceMultiTaggingHead(nn.Module):
     def forward(self, features, **kwargs):
         x = [sub_head(features) for sub_head in self.multi_tag_sub_heads]
         return x
+
+
+class MusicBertMultiTaskTokenClassificationConfig(BertConfig):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.num_multi_labels = kwargs.get("num_multi_labels", 1)
 
 
 class MusicBertForMultiTaskTokenClassification(BertPreTrainedModel):
@@ -642,3 +671,37 @@ class MusicBertForMultiTaskTokenClassification(BertPreTrainedModel):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
+
+
+SHARED_PARAMS = dict(
+    classifier_activation="gelu",
+    pooler_activation_fn="tanh",
+    hidden_dropout_prob=0.1,  # TODO confirm
+    attention_probs_dropout_prob=0.1,
+    # activation_dropout = 0.0,  # TODO confirm
+    # pooler_dropout = 0.0, # TODO confirm
+    # encoder_layers_to_keep = None,
+    # encoder_layerdrop = 0.0,
+    # untie_weights_roberta = False,
+    # spectral_norm_classification_head = False,
+    tie_word_embeddings=False,
+    pad_token_id=INPUT_PAD,
+    max_position_embeddings=2048,
+)
+
+BERT_PARAMS = {
+    "base": dict(
+        num_hidden_layers=12,
+        hidden_size=768,
+        intermediate_size=3072,
+        num_attention_heads=12,
+    )
+    | SHARED_PARAMS,
+    "tiny": dict(
+        num_hidden_layers=2,
+        hidden_size=128,
+        intermediate_size=512,
+        num_attention_heads=2,
+    )
+    | SHARED_PARAMS,
+}

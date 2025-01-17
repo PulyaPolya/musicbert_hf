@@ -1,0 +1,117 @@
+import os
+import pdb
+import sys
+import traceback
+from dataclasses import dataclass
+from functools import partial
+from typing import Literal
+
+from omegaconf import OmegaConf
+from transformers import Trainer, TrainingArguments
+
+from musicbert_hf.data import HDF5Dataset, collate_for_musicbert_fn
+from musicbert_hf.musicbert_class import (
+    BERT_PARAMS,
+    MusicBertForTokenClassification,
+    MusicBertTokenClassificationConfig,
+)
+
+
+def custom_excepthook(exc_type, exc_value, exc_traceback):
+    if exc_type is not KeyboardInterrupt:
+        traceback.print_exception(exc_type, exc_value, exc_traceback, file=sys.stdout)
+        pdb.post_mortem(exc_traceback)
+
+
+sys.excepthook = custom_excepthook
+
+
+@dataclass
+class Config:
+    # data_dir should have train, valid, and test subdirectories
+    data_dir: str
+    output_dir: str
+    log_dir: str = os.path.expanduser("~/tmp/musicbert_hf_logs")
+    architecture: Literal["base", "tiny"] = "base"
+    num_epochs: int = 0
+    batch_size: int = 4
+    learning_rate: float = 1e-3
+    weight_decay: float = 1e-2
+    warmup_steps: int = 0
+    max_steps: int | None = None
+    wandb_project: str | None = None
+
+    def __post_init__(self):
+        assert self.num_epochs is not None or self.max_steps is not None, (
+            "Either num_epochs or max_steps must be provided"
+        )
+
+    @property
+    def train_dir(self) -> str:
+        return os.path.join(self.data_dir, "train")
+
+    @property
+    def valid_dir(self) -> str:
+        return os.path.join(self.data_dir, "valid")
+
+    @property
+    def test_dir(self) -> str:
+        return os.path.join(self.data_dir, "test")
+
+
+def get_dataset(config, split):
+    data_dir = getattr(config, f"{split}_dir")
+    train_dataset = HDF5Dataset(
+        os.path.join(data_dir, "events.h5"),
+        os.path.join(data_dir, "key_pc_mode.h5"),
+    )
+    return train_dataset
+
+
+if __name__ == "__main__":
+    conf = OmegaConf.from_cli(sys.argv[1:])
+    config = Config(**conf)  # type:ignore
+
+    if config.wandb_project:
+        os.environ["WANDB_PROJECT"] = config.wandb_project
+
+        # Uncomment to turn on model checkpointing (up to 100Gb)
+        # os.environ["WANDB_LOG_MODEL"] = "checkpoint"
+
+    train_dataset = get_dataset(config, "train")
+    valid_dataset = get_dataset(config, "valid")
+
+    model_config = MusicBertTokenClassificationConfig(
+        num_labels=train_dataset.vocab_sizes[0], **BERT_PARAMS[config.architecture]
+    )
+    model = MusicBertForTokenClassification(model_config)
+
+    training_kwargs = dict(
+        output_dir=config.output_dir,
+        num_train_epochs=config.num_epochs,
+        per_device_train_batch_size=config.batch_size,
+        per_device_eval_batch_size=config.batch_size,
+        warmup_steps=config.warmup_steps,
+        weight_decay=config.weight_decay,
+        logging_dir=config.log_dir,
+        max_steps=config.max_steps,
+        push_to_hub=False,
+    )
+    if config.wandb_project:
+        training_kwargs["report_to"] = "wandb"
+
+    training_args = TrainingArguments(**training_kwargs)
+
+    assert len(train_dataset.vocab_sizes) == 1
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        data_collator=collate_for_musicbert_fn,
+        train_dataset=train_dataset,
+        eval_dataset=valid_dataset,
+        compute_loss_func=partial(
+            model.compute_loss, num_labels=train_dataset.vocab_sizes[0]
+        ),
+    )
+
+    trainer.train()

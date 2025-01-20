@@ -309,30 +309,31 @@ class MusicBert(BertPreTrainedModel):
             attentions=outputs.attentions,
         )
 
-    def prepare_inputs_for_generation(
-        self, input_ids, attention_mask=None, **model_kwargs
-    ):
-        raise NotImplementedError
-        input_shape = input_ids.shape
-        effective_batch_size = input_shape[0]
+    # TODO: (Malcolm 2025-01-17) I think I can remove, this is not a generative model
+    # def prepare_inputs_for_generation(
+    #     self, input_ids, attention_mask=None, **model_kwargs
+    # ):
+    #     raise NotImplementedError
+    #     input_shape = input_ids.shape
+    #     effective_batch_size = input_shape[0]
 
-        #  add a dummy token
-        if self.config.pad_token_id is None:
-            raise ValueError("The PAD token should be defined for generation")
+    #     #  add a dummy token
+    #     if self.config.pad_token_id is None:
+    #         raise ValueError("The PAD token should be defined for generation")
 
-        attention_mask = torch.cat(
-            [attention_mask, attention_mask.new_zeros((attention_mask.shape[0], 1))],
-            dim=-1,
-        )
-        dummy_token = torch.full(
-            (effective_batch_size, 1),
-            self.config.pad_token_id,
-            dtype=torch.long,
-            device=input_ids.device,
-        )
-        input_ids = torch.cat([input_ids, dummy_token], dim=1)
+    #     attention_mask = torch.cat(
+    #         [attention_mask, attention_mask.new_zeros((attention_mask.shape[0], 1))],
+    #         dim=-1,
+    #     )
+    #     dummy_token = torch.full(
+    #         (effective_batch_size, 1),
+    #         self.config.pad_token_id,
+    #         dtype=torch.long,
+    #         device=input_ids.device,
+    #     )
+    #     input_ids = torch.cat([input_ids, dummy_token], dim=1)
 
-        return {"input_ids": input_ids, "attention_mask": attention_mask}
+    #     return {"input_ids": input_ids, "attention_mask": attention_mask}
 
 
 class RobertaSequenceTaggingHead(nn.Module):
@@ -588,6 +589,7 @@ class MusicBertForMultiTaskTokenClassification(BertPreTrainedModel):
         return loss
 
     @add_start_docstrings_to_model_forward(
+        # TODO: (Malcolm 2025-01-17) verify that this is correct
         BERT_INPUTS_DOCSTRING.format("batch_size, sequence_length")
     )
     def forward(
@@ -649,16 +651,6 @@ class MusicBertForMultiTaskTokenClassification(BertPreTrainedModel):
             loss = self.compute_loss(
                 self.num_labels, logits, labels, num_items_in_batch
             )
-            # loss_fct = CrossEntropyLoss()
-            # losses = []
-            # for these_logits, these_labels, num_labels in zip_longest_with_error(
-            #     logits, labels, self.num_labels
-            # ):
-            #     this_loss = loss_fct(
-            #         these_logits.view(-1, num_labels), these_labels.view(-1)
-            #     )
-            #     losses.append(this_loss)
-            # loss = torch.stack(losses).mean()
 
         if not return_dict:
             raise NotImplementedError
@@ -671,6 +663,119 @@ class MusicBertForMultiTaskTokenClassification(BertPreTrainedModel):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
+
+
+class MusicBertMultiTaskTokenClassConditionedConfig(BertConfig):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.num_multi_labels = kwargs.get("num_multi_labels", 1)
+        self.z_mlp_layers = kwargs.get("z_mlp_layers", 2)
+        self.z_embed_dim = kwargs.get("z_embed_dim", 128)
+        self.z_mlp_norm = kwargs.get("z_mlp_norm", "yes")
+        self.z_vocab_size = kwargs.get("z_vocab_size", 10)
+        # "concat" or "proj[ect]"
+        self.z_combine_procedure = kwargs.get("z_combine_procedure", "concat")
+
+
+ACTIVATIONS = {"gelu": nn.GELU}
+
+
+def mlp_layer(input_dim, output_dim, dropout, activation_fn, norm=True):
+    modules: List[nn.Module] = [nn.Linear(input_dim, output_dim)]
+    if dropout:
+        modules.append(nn.Dropout(dropout))
+    if norm:
+        modules.append(nn.LayerNorm(output_dim))
+    if activation_fn is not None:
+        modules.append(ACTIVATIONS[activation_fn]())
+    return nn.Sequential(*modules)
+
+
+class MLP(nn.Module):
+    def __init__(
+        self,
+        n_layers: int,
+        vocab_size: int,
+        output_dim: int,
+        hidden_dim: int,
+        dropout: float,
+        activation_fn: str,
+        norm: bool,
+    ):
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, hidden_dim)
+        assert n_layers > 0
+        layers = []
+        for _ in range(n_layers - 1):
+            layers.append(
+                mlp_layer(hidden_dim, hidden_dim, dropout, activation_fn, norm)
+            )
+        layers.append(mlp_layer(hidden_dim, output_dim, dropout, activation_fn, norm))
+        self.layers = nn.Sequential(*layers)
+
+    def forward(self, x):
+        x = self.embedding(x)
+        return self.layers(x)
+
+
+class MusicBertMultiTaskTokenClassConditioned(MusicBert):
+    def __init__(self, config: MusicBertMultiTaskTokenClassConditionedConfig):
+        super().__init__(config)
+        self.z_encoder = MLP(
+            n_layers=config.z_mlp_layers,
+            vocab_size=config.z_vocab_size,
+            output_dim=config.z_embed_dim,
+            hidden_dim=config.z_embed_dim,
+            dropout=config.hidden_dropout_prob,
+            activation_fn=config.classifier_activation,
+            norm=config.z_mlp_norm == "yes",
+        )
+
+        if config.z_combine_procedure == "concat":
+            self.combine_f = lambda x, z: torch.concat([x, z], dim=-1)
+            self.output_dim = config.hidden_size + config.z_embed_dim
+        elif config.z_combine_procedure[:4] == "proj":
+            self.combine_projection = nn.Linear(
+                config.z_embed_dim + config.hidden_size, config.hidden_size
+            )
+
+            def combine_f(x, z):
+                return self.combine_projection(torch.concat([x, z], dim=-1))
+
+            self.combine_f = combine_f
+            self.output_dim = config.hidden_size
+        else:
+            raise ValueError
+
+    @add_start_docstrings_to_model_forward(
+        # TODO: (Malcolm 2025-01-17) verify that this is correct
+        BERT_INPUTS_DOCSTRING.format("batch_size, sequence_length")
+    )
+    def forward(
+        self,
+        conditioning_ids: torch.Tensor,
+        input_ids: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        token_type_ids: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
+        head_mask: Optional[torch.Tensor] = None,
+        inputs_embeds: Optional[torch.Tensor] = None,
+        labels: Optional[torch.Tensor] | list[torch.Tensor] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+    ) -> Union[Tuple[torch.Tensor], TokenClassifierOutput]:
+        musicbert_output = super().forward(
+            input_ids,
+            attention_mask,
+            token_type_ids,
+            position_ids,
+            head_mask,
+            inputs_embeds,
+        )
+        z = self.z_encoder(conditioning_ids)
+        musicbert_output = self.combine_f(musicbert_output["logits"], z)
+        breakpoint()
 
 
 SHARED_PARAMS = dict(

@@ -38,7 +38,7 @@ class Config:
     learning_rate: float = 1e-3
     weight_decay: float = 1e-2
     warmup_steps: int = 0
-    max_steps: int | None = None
+    max_steps: int = -1
     wandb_project: str | None = None
 
     def __post_init__(self):

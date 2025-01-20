@@ -1,6 +1,6 @@
 {
-  "input_base_folder": "~/project/musicbert_hf/rns_v1_raw/",
-  "output_base_folder": "~/project/musicbert_hf/rns_v1/",
+  "input_base_folder": "~/project/musicbert_hf/data/raw/",
+  "output_base_folder": "~/project/musicbert_hf/data/rns_v1/",
   "features": ["events", "quality", "inversion"],
   "concat_features": [
     [

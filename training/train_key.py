@@ -74,6 +74,9 @@ if __name__ == "__main__":
 
     if config.wandb_project:
         os.environ["WANDB_PROJECT"] = config.wandb_project
+    else:
+        os.environ.pop("WANDB_PROJECT", None)
+        os.environ["WANDB_DISABLED"] = "true"
 
         # Uncomment to turn on model checkpointing (up to 100Gb)
         # os.environ["WANDB_LOG_MODEL"] = "checkpoint"
@@ -109,9 +112,7 @@ if __name__ == "__main__":
         data_collator=collate_for_musicbert_fn,
         train_dataset=train_dataset,
         eval_dataset=valid_dataset,
-        compute_loss_func=partial(
-            model.compute_loss, num_labels=train_dataset.vocab_sizes[0]
-        ),
+        compute_loss_func=partial(model.compute_loss),
     )
 
     trainer.train()

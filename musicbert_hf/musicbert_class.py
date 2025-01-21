@@ -418,16 +418,22 @@ class MusicBertForTokenClassification(BertPreTrainedModel):
         self.post_init()
 
     @staticmethod
-    def compute_loss(logits, labels, num_items_in_batch, num_labels):
+    def compute_loss(logits, labels, num_items_in_batch):
+        # (Malcolm 2025-01-21) Note that we require num_items_in_batch to match
+        #   expected signature.
         if isinstance(logits, dict):
             # HuggingFace uses `TokenClassifierOutput` which is a dict subtype
             logits = logits["logits"]
-        loss_fct = CrossEntropyLoss()
-        loss = loss_fct(logits.view(-1, num_labels), labels.view(-1))
-        if num_items_in_batch is None:
-            num_items_in_batch = 1
 
-        return loss / num_items_in_batch
+        loss_fct = CrossEntropyLoss()
+        loss = loss_fct(logits.view(-1, logits.shape[-1]), labels.view(-1))
+
+        # I'm not sure why we would want to divide cross-entropy by the number of
+        #   elements; it doesn't grow with the number of elements
+        # if num_items_in_batch is None:
+        #     num_items_in_batch = 1
+
+        return loss # / num_items_in_batch
 
     @add_start_docstrings_to_model_forward(
         BERT_INPUTS_DOCSTRING.format("batch_size, sequence_length")
@@ -474,7 +480,7 @@ class MusicBertForTokenClassification(BertPreTrainedModel):
         loss = None
         if labels is not None:
             loss = self.compute_loss(
-                logits, labels, num_items_in_batch=None, num_labels=self.num_labels
+                logits, labels, num_items_in_batch=None
             )
 
         if not return_dict:
@@ -578,6 +584,8 @@ class MusicBertForMultiTaskTokenClassification(BertPreTrainedModel):
         for these_logits, these_labels, num_labels in zip_longest_with_error(
             logits, labels, num_labels
         ):
+            # TODO: (Malcolm 2025-01-21) I don't think we need num_labels, we can just
+            #   use the size of the last dimension
             this_loss = loss_fct(
                 these_logits.view(-1, num_labels), these_labels.view(-1)
             )

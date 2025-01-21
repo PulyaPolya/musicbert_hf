@@ -29,6 +29,9 @@ Token classifier
 python /Users/malcolm/google_drive/python/data_science/musicbert_fork/misc_scripts/get_example_token_classifier_output.py output_path=~/google_drive/python/data_science/musicbert_hf/tests/resources/fairseq_token_small_320.pt
 """
 
+ATOL = 1e-2
+assert ATOL <= 1e-2
+
 
 def _do_load(
     arch,
@@ -55,9 +58,9 @@ def _do_load(
         assert isinstance(fairseq_output, list)
         assert len(hf_output) == len(fairseq_output)
         for hf_out, fairseq_out in zip_longest_with_error(hf_output, fairseq_output):
-            torch.isclose(hf_out, fairseq_out, atol=5).all()
+            assert torch.isclose(hf_out, fairseq_out, atol=ATOL).all()
     else:
-        assert torch.isclose(hf_output, fairseq_output, atol=5).all()
+        assert torch.isclose(hf_output, fairseq_output, atol=ATOL).all()
 
 
 def _mlm_input_and_labels():
@@ -80,18 +83,19 @@ def test_load_small_checkpoint():
     )
 
 
-# @pytest.mark.skipif(
-#     BASE_CHECKPOINT is None, reason="BASE_CHECKPOINT environment variable unset"
-# )
-# def test_load_base_checkpoint():
-#     fairseq_output_path = os.path.join(RESOURCES_DIR, f"fairseq_base_320.pt")
-#     _do_load(
-#         "base",
-#         BASE_CHECKPOINT,
-#         load_musicbert_from_fairseq_checkpoint,
-#         fairseq_output_path,
-#         *_mlm_input_and_labels(),
-#     )
+@pytest.mark.slow
+@pytest.mark.skipif(
+    BASE_CHECKPOINT is None, reason="BASE_CHECKPOINT environment variable unset"
+)
+def test_load_base_checkpoint():
+    fairseq_output_path = os.path.join(FAIRSEQ_OUTPUT_DIR, f"fairseq_base_320.pt")
+    _do_load(
+        "base",
+        BASE_CHECKPOINT,
+        load_musicbert_from_fairseq_checkpoint,
+        fairseq_output_path,
+        *_mlm_input_and_labels(),
+    )
 
 
 def _token_class_input_and_labels():
@@ -119,8 +123,13 @@ def _token_multi_class_input_and_labels():
     sample_input = torch.arange(320).reshape(1, -1)
     # sample_labels should have 1/8 the seq length of sample_input
     sample_labels = torch.tile(torch.arange(2), (20,)).reshape(1, -1)
-    sample_attention_mask = torch.zeros_like(sample_labels)
-    sample_attention_mask[0, :18] = 1
+
+    # (Malcolm 2025-01-21) It would be nice to get a fairseq version using an attention
+    # mask but I'm not actually sure how to do that and probably not worth the effort.
+    # In meantime we use an attention mask that is all ones
+    sample_attention_mask = torch.ones_like(sample_labels)
+    # sample_attention_mask = torch.zeros_like(sample_labels)
+    # sample_attention_mask[0, :18] = 1
 
     # 11 tasks in test model
     sample_labels = [sample_labels for _ in range(11)]

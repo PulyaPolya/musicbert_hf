@@ -649,7 +649,7 @@ class MusicBertForMultiTaskTokenClassification(BertPreTrainedModel):
         if labels is not None:
             num_items_in_batch = input_ids.shape[0]
             loss = self.compute_loss(
-                self.num_labels, logits, labels, num_items_in_batch
+                logits, labels, num_items_in_batch, self.num_labels
             )
 
         if not return_dict:

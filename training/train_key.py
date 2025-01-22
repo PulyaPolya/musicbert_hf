@@ -108,7 +108,6 @@ if __name__ == "__main__":
             per_device_train_batch_size=config.batch_size,
             per_device_eval_batch_size=config.batch_size,
             warmup_steps=config.warmup_steps,
-            weight_decay=config.weight_decay,
             logging_dir=config.log_dir,
             max_steps=config.max_steps,
             push_to_hub=False,

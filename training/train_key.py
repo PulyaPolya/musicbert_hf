@@ -4,7 +4,7 @@ import sys
 import traceback
 from dataclasses import dataclass
 from functools import partial
-from typing import Literal
+from typing import Literal, Sequence
 
 from omegaconf import OmegaConf
 from transformers import Trainer, TrainingArguments
@@ -14,6 +14,7 @@ from musicbert_hf.musicbert_class import (
     BERT_PARAMS,
     MusicBertForTokenClassification,
     MusicBertTokenClassificationConfig,
+    freeze_layers,
 )
 
 
@@ -35,11 +36,13 @@ class Config:
     architecture: Literal["base", "tiny"] = "base"
     num_epochs: int = 0
     batch_size: int = 4
-    learning_rate: float = 1e-3
-    weight_decay: float = 1e-2
+    learning_rate: float = 2.5e-4
     warmup_steps: int = 0
     max_steps: int = -1
     wandb_project: str | None = None
+    # If None, freeze all layers; if int, freeze all layers up to and including
+    #   the specified layer; if sequence of ints, freeze the specified layers
+    freeze_layers: int | Sequence[int] | None = None
 
     def __post_init__(self):
         assert self.num_epochs is not None or self.max_steps is not None, (
@@ -96,6 +99,7 @@ if __name__ == "__main__":
         num_labels=train_dataset.vocab_sizes[0], **BERT_PARAMS[config.architecture]
     )
     model = MusicBertForTokenClassification(model_config)
+    model = freeze_layers(model, config.freeze_layers)
 
     training_kwargs = (
         dict(

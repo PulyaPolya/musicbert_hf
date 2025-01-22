@@ -818,3 +818,21 @@ BERT_PARAMS = {
     )
     | SHARED_PARAMS,
 }
+
+
+def freeze_layers(model: nn.Module, layers: Sequence[int] | int | None):
+    if layers is None:
+        return model
+    if isinstance(layers, int):
+        layers = list(range(layers))
+    for name, param in model.named_parameters():
+        for layer in layers:
+            if name.startswith(f"bert.encoder.layer.{layer}"):
+                print(name)
+                param.requires_grad = False
+        if name.startswith("bert.embeddings"):
+            print(name)
+            # (Malcolm 2025-01-22) if we freeze any layers, we also freeze the
+            # embeddings. Eventually we might want to freeze the embeddings separately.
+            param.requires_grad = False
+    return model

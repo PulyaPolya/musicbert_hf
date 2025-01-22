@@ -42,7 +42,7 @@ def test_musicbert_multitask_token_classifier_conditioned():
 
 def test_token_classifier():
     input_vocab_size = 1237
-    sequence_length = 10
+    sequence_length = 20
     batch_size = 2
     num_labels = 10
     n_iters = 100
@@ -59,9 +59,8 @@ def test_token_classifier():
             0, input_vocab_size, (batch_size, sequence_length * 8)
         )
         labels = torch.randint(0, num_labels, (batch_size, sequence_length))
-        output = model(input_ids)
-        loss = model.compute_loss(output, labels, 1, num_labels)
-        losses.append(loss.item())
+        output = model(input_ids=input_ids, labels=labels)
+        losses.append(output["loss"].item())
     actual_loss = sum(losses) / n_iters
     expected_loss = np.log(num_labels)
     print(f"actual_loss: {actual_loss}, expected_loss: {expected_loss}")
@@ -90,9 +89,9 @@ def test_multitask_token_classifier():
             torch.randint(0, num_multi_labels[i], (batch_size, sequence_length))
             for i in range(len(num_multi_labels))
         ]
-        output = model(input_ids)
-        loss = model.compute_loss(output, labels, 1, num_multi_labels)
-        losses.append(loss.item())
+        output = model(input_ids=input_ids, labels=labels)
+        losses.append(output["loss"].item())
+
     actual_loss = sum(losses) / n_iters
     expected_loss = np.log(num_multi_labels).mean()
     print(f"actual_loss: {actual_loss}, expected_loss: {expected_loss}")

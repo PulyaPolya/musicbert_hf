@@ -419,21 +419,21 @@ class MusicBertForTokenClassification(BertPreTrainedModel):
 
     @staticmethod
     def compute_loss(logits, labels, num_items_in_batch):
-        # (Malcolm 2025-01-21) Note that we require num_items_in_batch to match
-        #   expected signature.
         if isinstance(logits, dict):
             # HuggingFace uses `TokenClassifierOutput` which is a dict subtype
             logits = logits["logits"]
 
-        loss_fct = CrossEntropyLoss()
-        loss = loss_fct(logits.view(-1, logits.shape[-1]), labels.view(-1))
+        loss = F.cross_entropy(
+            logits.view(-1, logits.shape[-1]), labels.view(-1), reduction="mean"
+        )
 
         # I'm not sure why we would want to divide cross-entropy by the number of
-        #   elements; it doesn't grow with the number of elements
+        #   elements; it doesn't grow with the number of elements assuming we
+        #   apply reduction="mean"
         # if num_items_in_batch is None:
         #     num_items_in_batch = 1
 
-        return loss # / num_items_in_batch
+        return loss  # / num_items_in_batch
 
     @add_start_docstrings_to_model_forward(
         BERT_INPUTS_DOCSTRING.format("batch_size, sequence_length")
@@ -479,9 +479,7 @@ class MusicBertForTokenClassification(BertPreTrainedModel):
 
         loss = None
         if labels is not None:
-            loss = self.compute_loss(
-                logits, labels, num_items_in_batch=None
-            )
+            loss = self.compute_loss(logits, labels, num_items_in_batch=labels.shape[0])
 
         if not return_dict:
             output = (logits,) + outputs[2:]
@@ -576,24 +574,28 @@ class MusicBertForMultiTaskTokenClassification(BertPreTrainedModel):
         self.post_init()
 
     @staticmethod
-    def compute_loss(logits, labels, num_items_in_batch, num_labels):
+    def compute_loss(logits, labels, num_items_in_batch):
         if isinstance(logits, dict):
             logits = logits["logits"]
-        loss_fct = CrossEntropyLoss()
+
         losses = []
-        for these_logits, these_labels, num_labels in zip_longest_with_error(
-            logits, labels, num_labels
-        ):
-            # TODO: (Malcolm 2025-01-21) I don't think we need num_labels, we can just
-            #   use the size of the last dimension
-            this_loss = loss_fct(
-                these_logits.view(-1, num_labels), these_labels.view(-1)
+        for these_logits, these_labels in zip_longest_with_error(logits, labels):
+            this_loss = F.cross_entropy(
+                these_logits.view(-1, these_logits.shape[-1]),
+                these_labels.view(-1),
+                reduction="mean",
             )
             losses.append(this_loss)
-        if num_items_in_batch is None:
-            num_items_in_batch = 1
-        loss = torch.stack(losses).mean() / num_items_in_batch
 
+        # I'm not sure why we would want to divide cross-entropy by the number of
+        #   elements; it doesn't grow with the number of elements assuming we
+        #   apply reduction="mean"
+        # if num_items_in_batch is None:
+        #     num_items_in_batch = 1
+
+        # loss = torch.mean(torch.stack(losses) / num_items_in_batch)
+
+        loss = torch.stack(losses).mean()
         return loss
 
     @add_start_docstrings_to_model_forward(
@@ -656,9 +658,7 @@ class MusicBertForMultiTaskTokenClassification(BertPreTrainedModel):
         loss = None
         if labels is not None:
             num_items_in_batch = input_ids.shape[0]
-            loss = self.compute_loss(
-                logits, labels, num_items_in_batch, self.num_labels
-            )
+            loss = self.compute_loss(logits, labels, num_items_in_batch)
 
         if not return_dict:
             raise NotImplementedError

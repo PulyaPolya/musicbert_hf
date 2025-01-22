@@ -1,5 +1,5 @@
 import itertools
-from typing import Type, TypeVar
+from typing import Literal, Type, TypeVar
 
 import lovely_tensors
 import torch
@@ -225,15 +225,15 @@ def load_musicbert_from_fairseq_checkpoint(
 def load_musicbert_token_classifier_from_fairseq_checkpoint(
     checkpoint_path: str,
     print_missing_keys: bool = False,
+    checkpoint_type: Literal["musicbert", "token_classifier"] = "token_classifier",
+    num_labels: int | None = None,
 ) -> MusicBertForTokenClassification:
     ckpt_state_dict = torch.load(checkpoint_path)
 
     config = ckpt_state_dict["cfg"]
     model_config = config["model"]
     src_state_dict = ckpt_state_dict["model"]
-    num_labels = src_state_dict[
-        "classification_heads.sequence_tagging_head.out_proj.bias"
-    ].shape[0]
+
     classifier_dropout = model_config.pooler_dropout
     classifier_activation = model_config.pooler_activation_fn
     expected_missing_src_keys = [
@@ -245,12 +245,31 @@ def load_musicbert_token_classifier_from_fairseq_checkpoint(
         "encoder.lm_head.layer_norm.weight",
         "encoder.lm_head.layer_norm.bias",
     ]
-    parameter_mapping = {
-        "classification_heads.sequence_tagging_head.dense.weight": "classifier.dense.weight",
-        "classification_heads.sequence_tagging_head.dense.bias": "classifier.dense.bias",
-        "classification_heads.sequence_tagging_head.out_proj.weight": "classifier.out_proj.weight",
-        "classification_heads.sequence_tagging_head.out_proj.bias": "classifier.out_proj.bias",
-    }
+    if checkpoint_type == "musicbert":
+        assert num_labels is not None, "num_labels must be provided for musicbert"
+        parameter_mapping = {}
+        expected_missing_dst_keys = [
+            "classifier.dense.weight",
+            "classifier.dense.bias",
+            "classifier.out_proj.weight",
+            "classifier.out_proj.bias",
+        ]
+    elif checkpoint_type == "token_classifier":
+        assert num_labels is None, (
+            "num_labels must be None for token_classifier (we infer it from the checkpoint)"
+        )
+        num_labels = src_state_dict[
+            "classification_heads.sequence_tagging_head.out_proj.bias"
+        ].shape[0]
+        parameter_mapping = {
+            "classification_heads.sequence_tagging_head.dense.weight": "classifier.dense.weight",
+            "classification_heads.sequence_tagging_head.dense.bias": "classifier.dense.bias",
+            "classification_heads.sequence_tagging_head.out_proj.weight": "classifier.out_proj.weight",
+            "classification_heads.sequence_tagging_head.out_proj.bias": "classifier.out_proj.bias",
+        }
+        expected_missing_dst_keys = None
+    else:
+        raise ValueError(f"Invalid checkpoint type: {checkpoint_type}")
 
     return _load_from_checkpoint(
         model_config,
@@ -259,6 +278,7 @@ def load_musicbert_token_classifier_from_fairseq_checkpoint(
         print_missing_keys=print_missing_keys,
         parameter_mapping=parameter_mapping,
         expected_missing_src_keys=expected_missing_src_keys,
+        expected_missing_dst_keys=expected_missing_dst_keys,
         classifier_dropout=classifier_dropout,
         classifier_activation=classifier_activation,
         num_labels=num_labels,
@@ -268,6 +288,8 @@ def load_musicbert_token_classifier_from_fairseq_checkpoint(
 def load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
     checkpoint_path: str,
     print_missing_keys: bool = False,
+    checkpoint_type: Literal["musicbert", "token_classifier"] = "token_classifier",
+    num_labels: list[int] | None = None,
 ) -> MusicBertForMultiTaskTokenClassification:
     ckpt_state_dict = torch.load(checkpoint_path)
 
@@ -275,32 +297,52 @@ def load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
     model_config = config["model"]
 
     src_state_dict = ckpt_state_dict["model"]
-    num_labels = []
     parameter_mapping = {}
 
-    if (
-        "classification_heads.sequence_multitarget_tagging_head.multi_tag_sub_heads.0.out_proj.bias"
-        in src_state_dict
-    ):
-        multi_label = "multitarget"  # for backwards compatibility
-    else:
-        multi_label = "multitask"
+    if checkpoint_type == "musicbert":
+        assert num_labels is not None, "num_labels must be provided for musicbert"
+        expected_missing_dst_keys = []
+        for i in range(len(num_labels)):
+            expected_missing_dst_keys.extend(
+                [
+                    f"classifier.multi_tag_sub_heads.{i}.dense.weight",
+                    f"classifier.multi_tag_sub_heads.{i}.dense.bias",
+                    f"classifier.multi_tag_sub_heads.{i}.out_proj.weight",
+                    f"classifier.multi_tag_sub_heads.{i}.out_proj.bias",
+                ]
+            )
 
-    for i in itertools.count():
-        layer = src_state_dict.get(
-            f"classification_heads.sequence_{multi_label}_tagging_head.multi_tag_sub_heads.{i}.out_proj.bias",
-            None,
+    elif checkpoint_type == "token_classifier":
+        assert num_labels is None, (
+            "num_labels must be None for token_classifier (we infer it from the checkpoint)"
         )
-        if layer is None:
-            break
-        num_labels.append(layer.shape[0])
-        parameter_mapping |= {
-            f"classification_heads.sequence_{multi_label}_tagging_head.multi_tag_sub_heads.{i}.dense.weight": f"classifier.multi_tag_sub_heads.{i}.dense.weight",
-            f"classification_heads.sequence_{multi_label}_tagging_head.multi_tag_sub_heads.{i}.dense.bias": f"classifier.multi_tag_sub_heads.{i}.dense.bias",
-            f"classification_heads.sequence_{multi_label}_tagging_head.multi_tag_sub_heads.{i}.out_proj.weight": f"classifier.multi_tag_sub_heads.{i}.out_proj.weight",
-            f"classification_heads.sequence_{multi_label}_tagging_head.multi_tag_sub_heads.{i}.out_proj.bias": f"classifier.multi_tag_sub_heads.{i}.out_proj.bias",
-        }
-    assert num_labels
+
+        num_labels = []
+
+        if (
+            "classification_heads.sequence_multitarget_tagging_head.multi_tag_sub_heads.0.out_proj.bias"
+            in src_state_dict
+        ):
+            multi_label = "multitarget"  # for backwards compatibility
+        else:
+            multi_label = "multitask"
+
+        for i in itertools.count():
+            layer = src_state_dict.get(
+                f"classification_heads.sequence_{multi_label}_tagging_head.multi_tag_sub_heads.{i}.out_proj.bias",
+                None,
+            )
+            if layer is None:
+                break
+            num_labels.append(layer.shape[0])
+            parameter_mapping |= {
+                f"classification_heads.sequence_{multi_label}_tagging_head.multi_tag_sub_heads.{i}.dense.weight": f"classifier.multi_tag_sub_heads.{i}.dense.weight",
+                f"classification_heads.sequence_{multi_label}_tagging_head.multi_tag_sub_heads.{i}.dense.bias": f"classifier.multi_tag_sub_heads.{i}.dense.bias",
+                f"classification_heads.sequence_{multi_label}_tagging_head.multi_tag_sub_heads.{i}.out_proj.weight": f"classifier.multi_tag_sub_heads.{i}.out_proj.weight",
+                f"classification_heads.sequence_{multi_label}_tagging_head.multi_tag_sub_heads.{i}.out_proj.bias": f"classifier.multi_tag_sub_heads.{i}.out_proj.bias",
+            }
+        assert num_labels
+        expected_missing_dst_keys = []
     classifier_dropout = model_config.pooler_dropout
     classifier_activation = model_config.pooler_activation_fn
     expected_missing_src_keys = [
@@ -319,6 +361,7 @@ def load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
         print_missing_keys=print_missing_keys,
         parameter_mapping=parameter_mapping,
         expected_missing_src_keys=expected_missing_src_keys,
+        expected_missing_dst_keys=expected_missing_dst_keys,
         classifier_dropout=classifier_dropout,
         classifier_activation=classifier_activation,
         num_multi_labels=num_labels,

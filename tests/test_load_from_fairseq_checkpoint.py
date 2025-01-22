@@ -1,5 +1,6 @@
 import os
 
+import numpy as np
 import pytest
 import torch
 
@@ -8,6 +9,7 @@ from musicbert_hf.checkpoints import (
     load_musicbert_multitask_token_classifier_from_fairseq_checkpoint,
     load_musicbert_token_classifier_from_fairseq_checkpoint,
 )
+from musicbert_hf.musicbert_class import MusicBertForTokenClassification
 from musicbert_hf.utils import zip_longest_with_error
 
 SMALL_CHECKPOINT = os.getenv("SMALL_CHECKPOINT")
@@ -31,6 +33,8 @@ python /Users/malcolm/google_drive/python/data_science/musicbert_fork/misc_scrip
 
 ATOL = 1e-2
 assert ATOL <= 1e-2
+
+TORCH_SEED = 42
 
 
 def _do_load(
@@ -151,3 +155,66 @@ def test_load_small_multitask_token_classifier():
         fairseq_output_path,
         *_token_multi_class_input_and_labels(),
     )
+
+
+@pytest.mark.skipif(
+    SMALL_CHECKPOINT is None, reason="SMALL_CHECKPOINT environment variable unset"
+)
+def test_load_small_token_classifier():
+    num_labels = 10
+    model = load_musicbert_token_classifier_from_fairseq_checkpoint(
+        SMALL_CHECKPOINT,
+        checkpoint_type="musicbert",
+        num_labels=num_labels,
+    )
+    model.eval()
+
+    seq_len = 10
+    batch_size = 2
+    n_iters = 100
+    losses = []
+    torch.manual_seed(TORCH_SEED)
+    for _ in range(n_iters):
+        input_ids = torch.randint(0, 1237, (batch_size, seq_len * 8))
+        labels = torch.randint(0, num_labels, (batch_size, seq_len))
+
+        output = model(input_ids, labels)
+        loss = model.compute_loss(output, labels, num_items_in_batch=batch_size)
+        losses.append(loss.item())
+    actual_loss = sum(losses) / n_iters
+    expected_loss = np.log(num_labels)
+    print(f"actual_loss: {actual_loss}, expected_loss: {expected_loss}")
+    assert actual_loss == pytest.approx(expected_loss, abs=1e-2)
+
+
+@pytest.mark.skipif(
+    SMALL_CHECKPOINT is None, reason="SMALL_CHECKPOINT environment variable unset"
+)
+def test_load_small_multitask_token_classifier():
+    num_labels = [2, 5, 10]
+    model = load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
+        SMALL_CHECKPOINT,
+        checkpoint_type="musicbert",
+        num_labels=num_labels,
+    )
+    model.eval()
+
+    seq_len = 10
+    batch_size = 2
+    n_iters = 100
+
+    torch.manual_seed(TORCH_SEED)
+    losses = []
+    for _ in range(n_iters):
+        input_ids = torch.randint(0, 1237, (batch_size, seq_len * 8))
+        labels = [
+            torch.randint(0, num_labels[i], (batch_size, seq_len))
+            for i in range(len(num_labels))
+        ]
+
+        output = model(input_ids=input_ids, labels=labels)
+        losses.append(output["loss"].item())
+    actual_loss = sum(losses) / n_iters
+    expected_loss = np.log(num_labels).mean()
+    print(f"actual_loss: {actual_loss}, expected_loss: {expected_loss}")
+    assert actual_loss == pytest.approx(expected_loss, abs=1e-2)

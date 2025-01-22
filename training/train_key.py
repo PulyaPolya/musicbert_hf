@@ -1,6 +1,7 @@
 import os
 import pdb
 import sys
+import time
 import traceback
 from dataclasses import dataclass
 from functools import partial
@@ -13,6 +14,7 @@ from musicbert_hf.checkpoints import (
     load_musicbert_token_classifier_from_fairseq_checkpoint,
 )
 from musicbert_hf.data import HDF5Dataset, collate_for_musicbert_fn
+from musicbert_hf.metrics import compute_metrics
 from musicbert_hf.musicbert_class import (
     BERT_PARAMS,
     MusicBertForTokenClassification,
@@ -34,7 +36,7 @@ sys.excepthook = custom_excepthook
 class Config:
     # data_dir should have train, valid, and test subdirectories
     data_dir: str
-    output_dir: str
+    output_dir_base: str
     checkpoint_path: str
     log_dir: str = os.path.expanduser("~/tmp/musicbert_hf_logs")
     # architecture: Literal["base", "tiny"] = "base"
@@ -52,6 +54,10 @@ class Config:
         assert self.num_epochs is not None or self.max_steps is not None, (
             "Either num_epochs or max_steps must be provided"
         )
+        self._job_id = os.environ.get("SLURM_JOB_ID", None)
+        if self._job_id is None:
+            # Use the current time as the job ID if not running on the cluster
+            self._job_id = str(time.time())
 
     @property
     def train_dir(self) -> str:
@@ -64,6 +70,10 @@ class Config:
     @property
     def test_dir(self) -> str:
         return os.path.join(self.data_dir, "test")
+
+    @property
+    def output_dir(self) -> str:
+        return os.path.join(self.output_dir_base, self._job_id)
 
 
 def get_dataset(config, split):
@@ -123,6 +133,12 @@ if __name__ == "__main__":
             logging_dir=config.log_dir,
             max_steps=config.max_steps,
             push_to_hub=False,
+            eval_on_start=True,
+            eval_strategy="steps",
+            metric_for_best_model="accuracy",
+            greater_is_better=True,
+            save_total_limit=2,
+            load_best_model_at_end=True,
         )
         | training_kwargs
     )
@@ -141,6 +157,7 @@ if __name__ == "__main__":
         train_dataset=train_dataset,
         eval_dataset=valid_dataset,
         compute_loss_func=partial(model.compute_loss),
+        compute_metrics=compute_metrics,
     )
 
     trainer.train()

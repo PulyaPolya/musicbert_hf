@@ -6,3 +6,4 @@ transformers
 pytest
 pandas
 h5py
+torcheval

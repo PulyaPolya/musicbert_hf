@@ -1,8 +1,6 @@
 import os
-import pdb
 import sys
 import time
-import traceback
 from dataclasses import dataclass
 from functools import partial
 from typing import Literal, Sequence
@@ -15,21 +13,7 @@ from musicbert_hf.checkpoints import (
 )
 from musicbert_hf.data import HDF5Dataset, collate_for_musicbert_fn
 from musicbert_hf.metrics import compute_metrics
-from musicbert_hf.musicbert_class import (
-    BERT_PARAMS,
-    MusicBertForTokenClassification,
-    MusicBertTokenClassificationConfig,
-    freeze_layers,
-)
-
-
-def custom_excepthook(exc_type, exc_value, exc_traceback):
-    if exc_type is not KeyboardInterrupt:
-        traceback.print_exception(exc_type, exc_value, exc_traceback, file=sys.stdout)
-        pdb.post_mortem(exc_traceback)
-
-
-sys.excepthook = custom_excepthook
+from musicbert_hf.musicbert_class import freeze_layers
 
 
 @dataclass

@@ -827,7 +827,7 @@ def freeze_layers(model: nn.Module, layers: Sequence[int] | int | None):
         layers = list(range(layers))
     for name, param in model.named_parameters():
         for layer in layers:
-            if name.startswith(f"bert.encoder.layer.{layer}"):
+            if name.startswith(f"bert.encoder.layer.{layer}."):
                 print(name)
                 param.requires_grad = False
         if name.startswith("bert.embeddings"):

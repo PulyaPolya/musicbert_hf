@@ -9,6 +9,9 @@ from typing import Literal, Sequence
 from omegaconf import OmegaConf
 from transformers import Trainer, TrainingArguments
 
+from musicbert_hf.checkpoints import (
+    load_musicbert_token_classifier_from_fairseq_checkpoint,
+)
 from musicbert_hf.data import HDF5Dataset, collate_for_musicbert_fn
 from musicbert_hf.musicbert_class import (
     BERT_PARAMS,
@@ -32,8 +35,9 @@ class Config:
     # data_dir should have train, valid, and test subdirectories
     data_dir: str
     output_dir: str
+    checkpoint_path: str
     log_dir: str = os.path.expanduser("~/tmp/musicbert_hf_logs")
-    architecture: Literal["base", "tiny"] = "base"
+    # architecture: Literal["base", "tiny"] = "base"
     num_epochs: int = 0
     batch_size: int = 4
     learning_rate: float = 2.5e-4
@@ -95,11 +99,19 @@ if __name__ == "__main__":
     train_dataset = get_dataset(config, "train")
     valid_dataset = get_dataset(config, "valid")
 
-    model_config = MusicBertTokenClassificationConfig(
-        num_labels=train_dataset.vocab_sizes[0], **BERT_PARAMS[config.architecture]
-    )
-    model = MusicBertForTokenClassification(model_config)
-    model = freeze_layers(model, config.freeze_layers)
+    if config.checkpoint_path:
+        model = load_musicbert_token_classifier_from_fairseq_checkpoint(
+            config.checkpoint_path,
+            checkpoint_type="musicbert",
+            num_labels=train_dataset.vocab_sizes[0],
+        )
+    else:
+        raise ValueError("checkpoint_path must be provided")
+    # model_config = MusicBertTokenClassificationConfig(
+    #     num_labels=train_dataset.vocab_sizes[0], **BERT_PARAMS[config.architecture]
+    # )
+    # model = MusicBertForTokenClassification(model_config)
+    freeze_layers(model, config.freeze_layers)
 
     training_kwargs = (
         dict(

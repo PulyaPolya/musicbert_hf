@@ -835,4 +835,3 @@ def freeze_layers(model: nn.Module, layers: Sequence[int] | int | None):
             # (Malcolm 2025-01-22) if we freeze any layers, we also freeze the
             # embeddings. Eventually we might want to freeze the embeddings separately.
             param.requires_grad = False
-    return model

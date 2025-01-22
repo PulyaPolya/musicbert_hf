@@ -68,15 +68,23 @@ def get_dataset(config, split):
     return train_dataset
 
 
-if __name__ == "__main__":
+def get_config_and_training_kwargs():
     conf = OmegaConf.from_cli(sys.argv[1:])
-    config = Config(**conf)  # type:ignore
+    config_fields = set(Config.__dataclass_fields__.keys())
+    config_kwargs = {k: v for k, v in conf.items() if k in config_fields}
+    training_kwargs = {k: v for k, v in conf.items() if k not in config_fields}
+    config = Config(**config_kwargs)  # type:ignore
+    return config, training_kwargs
+
+
+if __name__ == "__main__":
+    config, training_kwargs = get_config_and_training_kwargs()
 
     if config.wandb_project:
         os.environ["WANDB_PROJECT"] = config.wandb_project
     else:
         os.environ.pop("WANDB_PROJECT", None)
-        os.environ["WANDB_DISABLED"] = "true"
+        # os.environ["WANDB_DISABLED"] = "true"
 
         # Uncomment to turn on model checkpointing (up to 100Gb)
         # os.environ["WANDB_LOG_MODEL"] = "checkpoint"
@@ -89,19 +97,24 @@ if __name__ == "__main__":
     )
     model = MusicBertForTokenClassification(model_config)
 
-    training_kwargs = dict(
-        output_dir=config.output_dir,
-        num_train_epochs=config.num_epochs,
-        per_device_train_batch_size=config.batch_size,
-        per_device_eval_batch_size=config.batch_size,
-        warmup_steps=config.warmup_steps,
-        weight_decay=config.weight_decay,
-        logging_dir=config.log_dir,
-        max_steps=config.max_steps,
-        push_to_hub=False,
+    training_kwargs = (
+        dict(
+            output_dir=config.output_dir,
+            num_train_epochs=config.num_epochs,
+            per_device_train_batch_size=config.batch_size,
+            per_device_eval_batch_size=config.batch_size,
+            warmup_steps=config.warmup_steps,
+            weight_decay=config.weight_decay,
+            logging_dir=config.log_dir,
+            max_steps=config.max_steps,
+            push_to_hub=False,
+        )
+        | training_kwargs
     )
     if config.wandb_project:
         training_kwargs["report_to"] = "wandb"
+    else:
+        training_kwargs["report_to"] = None
 
     training_args = TrainingArguments(**training_kwargs)
 

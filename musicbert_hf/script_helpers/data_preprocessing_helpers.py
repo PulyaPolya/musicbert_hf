@@ -19,6 +19,9 @@ class Config:
     )
 
     def __post_init__(self):
+        if self.vocabs is None:
+            assert self.vocab_dir is not None
+            self.vocabs = {}
         if "events" not in self.vocabs:
             self.vocabs["events"] = os.path.join(
                 os.path.dirname(__file__),
@@ -28,9 +31,6 @@ class Config:
                 "musicbert_fairseq_vocab.txt",
             )
             logging.info(f"Using default events vocab from {self.vocabs['events']}")
-        if self.vocabs is None:
-            assert self.vocab_dir is not None
-            self.vocabs = {}
         if self.vocab_dir is not None:
             self.vocab_dir = os.path.expanduser(self.vocab_dir)
             for feature in self.features:

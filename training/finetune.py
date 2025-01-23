@@ -156,7 +156,7 @@ if __name__ == "__main__":
     trainer = Trainer(
         model=model,
         args=training_args,
-        data_collator=collate_for_musicbert_fn,
+        data_collator=partial(collate_for_musicbert_fn, multitask=config.multitask),
         train_dataset=train_dataset,
         eval_dataset=valid_dataset,
         compute_loss_func=partial(model.compute_loss),

@@ -1,5 +1,5 @@
 {
-  "input_base_folder": "~/project/musicbert_hf/data/raw/",
+  "input_base_folder": "~/project/musicbert_hf/data/raw/data/",
   "output_base_folder": "~/project/musicbert_hf/data/rns_v1/",
   "features": ["events", "quality", "inversion"],
   "concat_features": [
@@ -9,5 +9,6 @@
       "secondary_alteration",
       "secondary_degree"
     ]
-  ]
+  ],
+  "vocab_dir": "~/project/musicbert_hf/vocabs/"
 }

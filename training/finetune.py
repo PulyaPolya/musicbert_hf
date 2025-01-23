@@ -3,7 +3,7 @@ import sys
 import time
 from dataclasses import dataclass
 from functools import partial
-from typing import Sequence
+from typing import Literal, Sequence
 
 from omegaconf import OmegaConf
 from transformers import Trainer, TrainingArguments
@@ -65,9 +65,11 @@ class Config:
     def output_dir(self) -> str:
         return os.path.join(self.output_dir_base, self._job_id)
 
-    @property
-    def target_paths(self) -> list[str]:
-        return [os.path.join(self.data_dir, f"{target}.h5") for target in self.targets]
+    def target_paths(self, split: Literal["train", "valid", "test"]) -> list[str]:
+        return [
+            os.path.join(self.data_dir, split, f"{target}.h5")
+            for target in self.targets
+        ]
 
     @property
     def multitask(self) -> bool:
@@ -78,7 +80,7 @@ def get_dataset(config, split):
     data_dir = getattr(config, f"{split}_dir")
     train_dataset = HDF5Dataset(
         os.path.join(data_dir, "events.h5"),
-        config.target_paths,
+        config.target_paths(split),
     )
     return train_dataset
 

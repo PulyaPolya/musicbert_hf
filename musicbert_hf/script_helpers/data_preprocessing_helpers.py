@@ -21,6 +21,8 @@ class Config:
     def __post_init__(self):
         if self.vocabs is None:
             assert self.vocab_dir is not None
+        if self.vocab_dir is not None:
+            self.vocab_dir = os.path.expanduser(self.vocab_dir)
             for feature in self.features:
                 feature_vocab_path = os.path.join(self.vocab_dir, f"{feature}.txt")
                 if not os.path.exists(feature_vocab_path):

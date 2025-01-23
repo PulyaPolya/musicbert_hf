@@ -153,7 +153,6 @@ if __name__ == "__main__":
 
     training_args = TrainingArguments(**training_kwargs)
 
-    assert len(train_dataset.vocab_sizes) == 1
     trainer = Trainer(
         model=model,
         args=training_args,

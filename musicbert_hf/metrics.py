@@ -21,8 +21,8 @@ def compute_metrics(eval_pred):
     )
 
     # TODO: (Malcolm 2025-01-22) consider averaging
-    precision = precision_score(true_labels, true_predictions, average="micro")
-    recall = recall_score(true_labels, true_predictions, average="micro")
+    precision = precision_score(true_labels, true_predictions, average="macro")
+    recall = recall_score(true_labels, true_predictions, average="macro")
     accuracy = accuracy_score(true_labels, true_predictions)
 
     return {
@@ -30,3 +30,13 @@ def compute_metrics(eval_pred):
         "recall": recall,
         "accuracy": accuracy,
     }
+
+
+if __name__ == "__main__":
+    batch_size = 2
+    seq_len = 12
+    num_labels = 8
+    logits = np.random.randn(batch_size, seq_len, num_labels)
+    labels = np.random.randint(0, num_labels, (batch_size, seq_len))
+
+    print(compute_metrics((logits, labels)))

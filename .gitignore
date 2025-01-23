@@ -1,3 +1,6 @@
 venvvars
 pytest.ini
 wandb/
+notes.md
+temp_scripts/
+scrap.sh

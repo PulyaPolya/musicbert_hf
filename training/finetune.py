@@ -3,12 +3,13 @@ import sys
 import time
 from dataclasses import dataclass
 from functools import partial
-from typing import Literal, Sequence
+from typing import Sequence
 
 from omegaconf import OmegaConf
 from transformers import Trainer, TrainingArguments
 
 from musicbert_hf.checkpoints import (
+    load_musicbert_multitask_token_classifier_from_fairseq_checkpoint,
     load_musicbert_token_classifier_from_fairseq_checkpoint,
 )
 from musicbert_hf.data import HDF5Dataset, collate_for_musicbert_fn
@@ -22,7 +23,9 @@ class Config:
     data_dir: str
     output_dir_base: str
     checkpoint_path: str
+    targets: str | list[str]
     log_dir: str = os.path.expanduser("~/tmp/musicbert_hf_logs")
+    # We will always load from a checkpoint so we don't need to specify architecture
     # architecture: Literal["base", "tiny"] = "base"
     num_epochs: int = 0
     batch_size: int = 4
@@ -43,6 +46,9 @@ class Config:
             # Use the current time as the job ID if not running on the cluster
             self._job_id = str(time.time())
 
+        if isinstance(self.targets, str):
+            self.targets = [self.targets]
+
     @property
     def train_dir(self) -> str:
         return os.path.join(self.data_dir, "train")
@@ -59,12 +65,20 @@ class Config:
     def output_dir(self) -> str:
         return os.path.join(self.output_dir_base, self._job_id)
 
+    @property
+    def target_paths(self) -> list[str]:
+        return [os.path.join(self.data_dir, f"{target}.h5") for target in self.targets]
+
+    @property
+    def multitask(self) -> bool:
+        return len(self.targets) > 1
+
 
 def get_dataset(config, split):
     data_dir = getattr(config, f"{split}_dir")
     train_dataset = HDF5Dataset(
         os.path.join(data_dir, "events.h5"),
-        os.path.join(data_dir, "key_pc_mode.h5"),
+        config.target_paths,
     )
     return train_dataset
 
@@ -94,17 +108,21 @@ if __name__ == "__main__":
     valid_dataset = get_dataset(config, "valid")
 
     if config.checkpoint_path:
-        model = load_musicbert_token_classifier_from_fairseq_checkpoint(
-            config.checkpoint_path,
-            checkpoint_type="musicbert",
-            num_labels=train_dataset.vocab_sizes[0],
-        )
+        if config.multitask:
+            model = load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
+                config.checkpoint_path,
+                checkpoint_type="musicbert",
+                num_labels=train_dataset.vocab_sizes,
+            )
+        else:
+            model = load_musicbert_token_classifier_from_fairseq_checkpoint(
+                config.checkpoint_path,
+                checkpoint_type="musicbert",
+                num_labels=train_dataset.vocab_sizes[0],
+            )
     else:
         raise ValueError("checkpoint_path must be provided")
-    # model_config = MusicBertTokenClassificationConfig(
-    #     num_labels=train_dataset.vocab_sizes[0], **BERT_PARAMS[config.architecture]
-    # )
-    # model = MusicBertForTokenClassification(model_config)
+
     freeze_layers(model, config.freeze_layers)
 
     training_kwargs = (

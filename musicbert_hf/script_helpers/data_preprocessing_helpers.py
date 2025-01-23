@@ -19,27 +19,6 @@ class Config:
     )
 
     def __post_init__(self):
-        if self.vocabs is None:
-            assert self.vocab_dir is not None
-        if self.vocab_dir is not None:
-            self.vocab_dir = os.path.expanduser(self.vocab_dir)
-            for feature in self.features:
-                feature_vocab_path = os.path.join(self.vocab_dir, f"{feature}.txt")
-                if not os.path.exists(feature_vocab_path):
-                    raise FileNotFoundError(
-                        f"Vocab file {feature_vocab_path} not found"
-                    )
-                self.vocabs[feature] = feature_vocab_path
-            for concat in self.concat_features:
-                concatted_feature = "_".join(concat)
-                concatted_feature_vocab_path = os.path.join(
-                    self.vocab_dir, f"{concatted_feature}.txt"
-                )
-                if not os.path.exists(concatted_feature_vocab_path):
-                    raise FileNotFoundError(
-                        f"Vocab file {concatted_feature_vocab_path} not found"
-                    )
-                self.vocabs[concatted_feature] = concatted_feature_vocab_path
         if "events" not in self.vocabs:
             self.vocabs["events"] = os.path.join(
                 os.path.dirname(__file__),
@@ -49,6 +28,32 @@ class Config:
                 "musicbert_fairseq_vocab.txt",
             )
             logging.info(f"Using default events vocab from {self.vocabs['events']}")
+        if self.vocabs is None:
+            assert self.vocab_dir is not None
+            self.vocabs = {}
+        if self.vocab_dir is not None:
+            self.vocab_dir = os.path.expanduser(self.vocab_dir)
+            for feature in self.features:
+                if feature in self.vocabs:
+                    continue
+                feature_vocab_path = os.path.join(self.vocab_dir, f"{feature}.txt")
+                if not os.path.exists(feature_vocab_path):
+                    raise FileNotFoundError(
+                        f"Vocab file {feature_vocab_path} not found"
+                    )
+                self.vocabs[feature] = feature_vocab_path
+            for concat in self.concat_features:
+                concatted_feature = "_".join(concat)
+                if concatted_feature in self.vocabs:
+                    continue
+                concatted_feature_vocab_path = os.path.join(
+                    self.vocab_dir, f"{concatted_feature}.txt"
+                )
+                if not os.path.exists(concatted_feature_vocab_path):
+                    raise FileNotFoundError(
+                        f"Vocab file {concatted_feature_vocab_path} not found"
+                    )
+                self.vocabs[concatted_feature] = concatted_feature_vocab_path
 
         self.input_base_folder = os.path.expanduser(self.input_base_folder)
         self.output_base_folder = os.path.expanduser(self.output_base_folder)

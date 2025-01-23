@@ -13,7 +13,7 @@ from musicbert_hf.checkpoints import (
     load_musicbert_token_classifier_from_fairseq_checkpoint,
 )
 from musicbert_hf.data import HDF5Dataset, collate_for_musicbert_fn
-from musicbert_hf.metrics import compute_metrics
+from musicbert_hf.metrics import compute_metrics, compute_metrics_multitask
 from musicbert_hf.musicbert_class import freeze_layers
 
 
@@ -153,6 +153,13 @@ if __name__ == "__main__":
 
     training_args = TrainingArguments(**training_kwargs)
 
+    if config.multitask:
+        compute_metrics_fn = partial(
+            compute_metrics_multitask, task_names=config.targets
+        )
+    else:
+        compute_metrics_fn = compute_metrics
+
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -160,7 +167,7 @@ if __name__ == "__main__":
         train_dataset=train_dataset,
         eval_dataset=valid_dataset,
         compute_loss_func=partial(model.compute_loss),
-        compute_metrics=compute_metrics,
+        compute_metrics=compute_metrics_fn,
     )
 
     trainer.train()

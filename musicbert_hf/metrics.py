@@ -32,6 +32,34 @@ def compute_metrics(eval_pred):
     }
 
 
+def compute_metrics_multitask(eval_pred, *, task_names: list[str]):
+    # In multitask case:
+    # - logits is a lost of np arrays, one per task, with expected
+    # shape (batch_size, seq_len, num_labels_for_task)
+    # - labels is a list of np arrays, one per task, with expected
+    # shape (batch_size, seq_len)
+    logits_list, labels_list = eval_pred
+    assert len(logits_list) == len(labels_list) == len(task_names)
+
+    metrics = {}
+    precisions = []
+    recalls = []
+    accuracies = []
+    for task_name, logits, labels in zip(task_names, logits_list, labels_list):
+        task_metrics = compute_metrics((logits, labels))
+        precisions.append(task_metrics["precision"])
+        recalls.append(task_metrics["recall"])
+        accuracies.append(task_metrics["accuracy"])
+        for metric_name, metric_value in task_metrics.items():
+            metrics[f"{task_name}_{metric_name}"] = metric_value
+
+    metrics["precision"] = np.mean(precisions)
+    metrics["recall"] = np.mean(recalls)
+    metrics["accuracy"] = np.mean(accuracies)
+
+    return metrics
+
+
 if __name__ == "__main__":
     batch_size = 2
     seq_len = 12

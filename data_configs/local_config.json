@@ -1,6 +1,6 @@
 {
   "input_base_folder": "~/tmp/foo/data/",
-  "output_base_folder": "~/tmp/foo_tokens/data/",
+  "output_base_folder": "~/tmp/foo_tokens/rns_v1/",
   "features": ["events", "quality", "inversion"],
   "concat_features": [
     [

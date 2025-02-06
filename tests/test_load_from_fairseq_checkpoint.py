@@ -7,9 +7,11 @@ import torch
 from musicbert_hf.checkpoints import (
     load_musicbert_from_fairseq_checkpoint,
     load_musicbert_multitask_token_classifier_from_fairseq_checkpoint,
+    load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint,
     load_musicbert_token_classifier_from_fairseq_checkpoint,
 )
-from musicbert_hf.musicbert_class import MusicBertForTokenClassification
+
+# from musicbert_hf.musicbert_class import MusicBertForTokenClassification
 from musicbert_hf.utils import zip_longest_with_error
 
 SMALL_CHECKPOINT = os.getenv("SMALL_CHECKPOINT")
@@ -17,6 +19,7 @@ BASE_CHECKPOINT = os.getenv("BASE_CHECKPOINT")
 
 SMALL_TOKEN_CLS = os.getenv("SMALL_TOKEN_CLS")
 SMALL_TOKEN_MULTI_CLS = os.getenv("SMALL_TOKEN_MULTI_CLS")
+SMALL_TOKEN_MULTI_CLS_COND = os.getenv("SMALL_TOKEN_MULTI_CLS_COND")
 
 FAIRSEQ_OUTPUT_DIR = os.path.join(
     os.path.dirname((os.path.realpath(__file__))), "fairseq_outputs"
@@ -31,29 +34,34 @@ Token classifier
 python /Users/malcolm/google_drive/python/data_science/musicbert_fork/misc_scripts/get_example_token_classifier_output.py output_path=~/google_drive/python/data_science/musicbert_hf/tests/resources/fairseq_token_small_320.pt
 """
 
-ATOL = 1e-2
+ATOL = 1e-3
 assert ATOL <= 1e-2
 
 TORCH_SEED = 42
 
 
 def _do_load(
-    arch,
     checkpoint_path,
     load_f,
     fairseq_output_path,
     sample_input,
     sample_labels,
     sample_attention_mask=None,
+    sample_conditioning_input=None,
 ):
     model = load_f(checkpoint_path)
     model.eval()
 
-    result = model(
+    model_kwargs = dict(
         input_ids=sample_input,
         labels=sample_labels,
         attention_mask=sample_attention_mask,
     )
+    if sample_conditioning_input is not None:
+        model_kwargs["conditioning_ids"] = sample_conditioning_input
+
+    result = model(**model_kwargs)
+
     hf_output = result.logits
 
     fairseq_output = torch.load(fairseq_output_path)
@@ -79,7 +87,6 @@ def _mlm_input_and_labels():
 def test_load_small_checkpoint():
     fairseq_output_path = os.path.join(FAIRSEQ_OUTPUT_DIR, "fairseq_small_320.pt")
     _do_load(
-        "small",
         SMALL_CHECKPOINT,
         load_musicbert_from_fairseq_checkpoint,
         fairseq_output_path,
@@ -94,7 +101,6 @@ def test_load_small_checkpoint():
 def test_load_base_checkpoint():
     fairseq_output_path = os.path.join(FAIRSEQ_OUTPUT_DIR, f"fairseq_base_320.pt")
     _do_load(
-        "base",
         BASE_CHECKPOINT,
         load_musicbert_from_fairseq_checkpoint,
         fairseq_output_path,
@@ -115,7 +121,6 @@ def _token_class_input_and_labels():
 def test_load_small_token_classifier():
     fairseq_output_path = os.path.join(FAIRSEQ_OUTPUT_DIR, "fairseq_token_small_320.pt")
     _do_load(
-        "small",
         SMALL_TOKEN_CLS,
         load_musicbert_token_classifier_from_fairseq_checkpoint,
         fairseq_output_path,
@@ -149,7 +154,6 @@ def test_load_small_multitask_token_classifier():
         FAIRSEQ_OUTPUT_DIR, "fairseq_token_multi_small_320.pt"
     )
     _do_load(
-        "small",
         SMALL_TOKEN_MULTI_CLS,
         load_musicbert_multitask_token_classifier_from_fairseq_checkpoint,
         fairseq_output_path,
@@ -157,10 +161,44 @@ def test_load_small_multitask_token_classifier():
     )
 
 
+def _token_multi_class_input_and_labels_and_conditioning():
+    sample_input = torch.arange(320).reshape(1, -1)
+    sample_conditioning = torch.arange(40).reshape(1, -1) % 16
+    # sample_labels should have 1/8 the seq length of sample_input
+    sample_labels = torch.tile(torch.arange(2), (20,)).reshape(1, -1)
+
+    # (Malcolm 2025-01-21) It would be nice to get a fairseq version using an attention
+    # mask but I'm not actually sure how to do that and probably not worth the effort.
+    # In meantime we use an attention mask that is all ones
+    sample_attention_mask = torch.ones_like(sample_labels)
+    # sample_attention_mask = torch.zeros_like(sample_labels)
+    # sample_attention_mask[0, :18] = 1
+
+    # 11 tasks in test model
+    sample_labels = [sample_labels for _ in range(11)]
+    return sample_input, sample_labels, sample_attention_mask, sample_conditioning
+
+
+@pytest.mark.skipif(
+    SMALL_TOKEN_MULTI_CLS_COND is None,
+    reason="SMALL_TOKEN_MULTI_CLS_COND environment variable unset",
+)
+def test_load_small_multitask_with_conditioning_token_classifier():
+    fairseq_output_path = os.path.join(
+        FAIRSEQ_OUTPUT_DIR, "fairseq_token_multi_cond_small_320.pt"
+    )
+    _do_load(
+        SMALL_TOKEN_MULTI_CLS_COND,
+        load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint,
+        fairseq_output_path,
+        *_token_multi_class_input_and_labels_and_conditioning(),
+    )
+
+
 @pytest.mark.skipif(
     SMALL_CHECKPOINT is None, reason="SMALL_CHECKPOINT environment variable unset"
 )
-def test_load_small_token_classifier():
+def test_load_small_token_classifier_expected_loss():
     num_labels = 10
     model = load_musicbert_token_classifier_from_fairseq_checkpoint(
         SMALL_CHECKPOINT,
@@ -183,14 +221,14 @@ def test_load_small_token_classifier():
         losses.append(loss.item())
     actual_loss = sum(losses) / n_iters
     expected_loss = np.log(num_labels)
-    print(f"actual_loss: {actual_loss}, expected_loss: {expected_loss}")
+
     assert actual_loss == pytest.approx(expected_loss, abs=1e-2)
 
 
 @pytest.mark.skipif(
     SMALL_CHECKPOINT is None, reason="SMALL_CHECKPOINT environment variable unset"
 )
-def test_load_small_multitask_token_classifier():
+def test_load_small_multitask_token_classifier_expected_loss():
     num_labels = [2, 5, 10]
     model = load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
         SMALL_CHECKPOINT,
@@ -216,5 +254,5 @@ def test_load_small_multitask_token_classifier():
         losses.append(output["loss"].item())
     actual_loss = sum(losses) / n_iters
     expected_loss = np.log(num_labels).mean()
-    print(f"actual_loss: {actual_loss}, expected_loss: {expected_loss}")
+
     assert actual_loss == pytest.approx(expected_loss, abs=1e-2)

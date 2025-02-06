@@ -24,6 +24,7 @@ class Config:
     output_dir_base: str
     checkpoint_path: str
     targets: str | list[str]
+    conditioning: str | list[str] | None = None
     log_dir: str = os.path.expanduser("~/tmp/musicbert_hf_logs")
     # We will always load from a checkpoint so we don't need to specify architecture
     # architecture: Literal["base", "tiny"] = "base"
@@ -49,6 +50,11 @@ class Config:
         if isinstance(self.targets, str):
             self.targets = [self.targets]
 
+        if isinstance(self.conditioning, str):
+            self.conditioning = [self.conditioning]
+        elif self.conditioning is None:
+            self.conditioning = []
+
     @property
     def train_dir(self) -> str:
         return os.path.join(self.data_dir, "train")
@@ -69,6 +75,12 @@ class Config:
         return [
             os.path.join(self.data_dir, split, f"{target}.h5")
             for target in self.targets
+        ]
+
+    def conditioning_paths(self, split: Literal["train", "valid", "test"]) -> list[str]:
+        return [
+            os.path.join(self.data_dir, split, f"{cond}.h5")
+            for cond in self.conditioning
         ]
 
     @property
@@ -111,17 +123,29 @@ if __name__ == "__main__":
 
     if config.checkpoint_path:
         if config.multitask:
-            model = load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
-                config.checkpoint_path,
-                checkpoint_type="musicbert",
-                num_labels=train_dataset.vocab_sizes,
-            )
+            if config.conditioning:
+                raise NotImplementedError(
+                    "Conditioning is not yet implemented for multitask training"
+                )
+            else:
+                model = (
+                    load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
+                        config.checkpoint_path,
+                        checkpoint_type="musicbert",
+                        num_labels=train_dataset.vocab_sizes,
+                    )
+                )
         else:
-            model = load_musicbert_token_classifier_from_fairseq_checkpoint(
-                config.checkpoint_path,
-                checkpoint_type="musicbert",
-                num_labels=train_dataset.vocab_sizes[0],
-            )
+            if config.conditioning:
+                raise NotImplementedError(
+                    "Conditioning is not yet implemented for single-task training"
+                )
+            else:
+                model = load_musicbert_token_classifier_from_fairseq_checkpoint(
+                    config.checkpoint_path,
+                    checkpoint_type="musicbert",
+                    num_labels=train_dataset.vocab_sizes[0],
+                )
     else:
         raise ValueError("checkpoint_path must be provided")
 

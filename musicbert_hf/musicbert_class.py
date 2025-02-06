@@ -539,8 +539,7 @@ class MusicBertMultiTaskTokenClassificationConfig(BertConfig):
 class MusicBertForMultiTaskTokenClassification(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
-        # TODO: (Malcolm 2024-03-16) is it going to cause any issues if num_labels is a
-        #   sequence here?
+
         self.num_labels = config.num_multi_labels
         self.num_tasks = len(self.num_labels)
         if config.is_decoder:
@@ -707,8 +706,8 @@ class MLP(nn.Module):
         output_dim: int,
         hidden_dim: int,
         dropout: float,
-        activation_fn: str,
         norm: bool,
+        activation_fn: str = "gelu",
     ):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, hidden_dim)
@@ -726,16 +725,33 @@ class MLP(nn.Module):
         return self.layers(x)
 
 
-class MusicBertMultiTaskTokenClassConditioned(MusicBert):
+class MusicBertMultiTaskTokenClassConditioned(BertPreTrainedModel):
     def __init__(self, config: MusicBertMultiTaskTokenClassConditionedConfig):
         super().__init__(config)
+        self.num_labels = config.num_multi_labels
+        self.num_tasks = len(self.num_labels)
+        if config.is_decoder:
+            logger.warning(
+                "If you want to use `MusicBert` make sure `config.is_decoder=False` for "
+                "bi-directional self-attention."
+            )
+        assert not config.tie_word_embeddings, (
+            "`tie_word_embeddings` is not implemented"
+        )
+
+        self.bert = MusicBertEncoder(config, add_pooling_layer=False, upsample=False)
+
+        classifier_dropout = (
+            config.classifier_dropout
+            if config.classifier_dropout is not None
+            else config.hidden_dropout_prob
+        )
         self.z_encoder = MLP(
             n_layers=config.z_mlp_layers,
             vocab_size=config.z_vocab_size,
             output_dim=config.z_embed_dim,
             hidden_dim=config.z_embed_dim,
             dropout=config.hidden_dropout_prob,
-            activation_fn=config.classifier_activation,
             norm=config.z_mlp_norm == "yes",
         )
 
@@ -755,6 +771,46 @@ class MusicBertMultiTaskTokenClassConditioned(MusicBert):
         else:
             raise ValueError
 
+        self.classifier = RobertaSequenceMultiTaggingHead(
+            input_dim=self.output_dim,
+            # I'm not sure how deliberate it was, but in my FairSEQ
+            # implementation, we use the same inner_dim as the input_dim.
+            # There's a plausible case that it should instead by config.hidden_size,
+            # although it probably doesn't matter too much.
+            inner_dim=self.output_dim,
+            num_classes=config.num_multi_labels,
+            activation_fn=config.classifier_activation,
+            pooler_dropout=classifier_dropout,
+        )
+
+        # Initialize weights and apply final processing
+        self.post_init()
+
+    @staticmethod
+    def compute_loss(logits, labels, num_items_in_batch):
+        if isinstance(logits, dict):
+            logits = logits["logits"]
+
+        losses = []
+        for these_logits, these_labels in zip_longest_with_error(logits, labels):
+            this_loss = F.cross_entropy(
+                these_logits.view(-1, these_logits.shape[-1]),
+                these_labels.view(-1),
+                reduction="mean",
+            )
+            losses.append(this_loss)
+
+        # I'm not sure why we would want to divide cross-entropy by the number of
+        #   elements; it doesn't grow with the number of elements assuming we
+        #   apply reduction="mean"
+        # if num_items_in_batch is None:
+        #     num_items_in_batch = 1
+
+        # loss = torch.mean(torch.stack(losses) / num_items_in_batch)
+
+        loss = torch.stack(losses).mean()
+        return loss
+
     @add_start_docstrings_to_model_forward(
         # TODO: (Malcolm 2025-01-17) verify that this is correct
         BERT_INPUTS_DOCSTRING.format("batch_size, sequence_length")
@@ -773,17 +829,58 @@ class MusicBertMultiTaskTokenClassConditioned(MusicBert):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple[torch.Tensor], TokenClassifierOutput]:
-        musicbert_output = super().forward(
-            input_ids,
-            attention_mask,
-            token_type_ids,
-            position_ids,
-            head_mask,
-            inputs_embeds,
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
         )
+
+        if isinstance(labels, torch.Tensor):
+            assert labels.ndim == 3, (
+                "labels must have shape (num_tasks, batch_size, sequence_length)"
+            )
+            assert labels.shape[0] == self.num_tasks, (
+                "labels must have shape (num_tasks, batch_size, sequence_length)"
+            )
+        elif isinstance(labels, list):
+            assert len(labels) == self.num_tasks, "labels must have length num_tasks"
+            for label in labels:
+                assert label.ndim == 2, (
+                    "labels must have shape (batch_size, sequence_length)"
+                )
+        outputs = self.bert(
+            input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
+            head_mask=head_mask,
+            inputs_embeds=inputs_embeds,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+        sequence_output = outputs[0]
         z = self.z_encoder(conditioning_ids)
-        musicbert_output = self.combine_f(musicbert_output["logits"], z)
-        breakpoint()
+        sequence_output = self.combine_f(sequence_output, z)
+
+        # TODO: (Malcolm 2024-03-16) do we want to add dropout here?
+        # sequence_output = self.dropout(sequence_output)
+        logits = self.classifier(sequence_output)
+
+        loss = None
+        if labels is not None:
+            num_items_in_batch = input_ids.shape[0]
+            loss = self.compute_loss(logits, labels, num_items_in_batch)
+
+        if not return_dict:
+            raise NotImplementedError
+            output = (logits,) + outputs[2:]
+            return ((loss,) + output) if loss is not None else output
+
+        return TokenClassifierOutput(
+            loss=loss,  # type:ignore
+            logits=logits,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+        )
 
 
 SHARED_PARAMS = dict(

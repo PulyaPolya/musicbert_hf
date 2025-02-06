@@ -9,6 +9,8 @@ from musicbert_hf.musicbert_class import (
     MusicBert,
     MusicBertForMultiTaskTokenClassification,
     MusicBertForTokenClassification,
+    MusicBertMultiTaskTokenClassConditioned,
+    MusicBertMultiTaskTokenClassConditionedConfig,
 )
 
 T = TypeVar("T", bound=BertPreTrainedModel)
@@ -23,6 +25,7 @@ def _load_from_checkpoint(
     expected_missing_src_keys: list[str] | None = None,
     expected_missing_dst_keys: list[str] | None = None,
     print_state_dicts: bool = False,
+    config_cls: Type[BertConfig] = BertConfig,
     **config_kwargs,
 ) -> T:
     max_positions = model_config.max_positions
@@ -35,7 +38,7 @@ def _load_from_checkpoint(
 
     vocab_size = 1237  # Not sure if there is a way to retrieve this from ckpt_state_dict, can't find it
 
-    bert_config = BertConfig(
+    bert_config = config_cls(
         num_hidden_layers=n_layers,
         hidden_size=d_model,
         intermediate_size=d_ff,
@@ -159,8 +162,25 @@ def _load_from_checkpoint(
             if print_missing_keys and key not in expected_missing_dst_keys:
                 print(f"Dest key `{key}` not in `parameter_mapping`")
 
-    assert sorted(missing_src_keys) == sorted(expected_missing_src_keys)
-    assert sorted(missing_dst_keys) == sorted(expected_missing_dst_keys)
+    only_in_missing_src_keys = set(missing_src_keys) - set(expected_missing_src_keys)
+    only_in_expected_missing_src_keys = set(expected_missing_src_keys) - set(
+        missing_src_keys
+    )
+
+    only_in_missing_dst_keys = set(missing_dst_keys) - set(expected_missing_dst_keys)
+    only_in_expected_missing_dst_keys = set(expected_missing_dst_keys) - set(
+        missing_dst_keys
+    )
+    assert not any(
+        [
+            only_in_missing_src_keys,
+            only_in_expected_missing_src_keys,
+            only_in_missing_dst_keys,
+            only_in_expected_missing_dst_keys,
+        ]
+    ), (
+        f"{only_in_missing_src_keys=}, {only_in_expected_missing_src_keys=}, {only_in_missing_dst_keys=}, {only_in_expected_missing_dst_keys=}"
+    )
 
     if print_state_dicts:
         print("REMAPPED_STATE_DICT")
@@ -365,4 +385,99 @@ def load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
         classifier_dropout=classifier_dropout,
         classifier_activation=classifier_activation,
         num_multi_labels=num_labels,
+    )
+
+
+def load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint(
+    checkpoint_path: str,
+    print_missing_keys: bool = False,
+    checkpoint_type: Literal["musicbert", "token_classifier"] = "token_classifier",
+    num_labels: list[int] | None = None,
+    z_vocab_size: int | None = None,
+) -> MusicBertMultiTaskTokenClassConditioned:
+    ckpt_state_dict = torch.load(checkpoint_path)
+
+    config = ckpt_state_dict["cfg"]
+    model_config = config["model"]
+
+    src_state_dict = ckpt_state_dict["model"]
+    parameter_mapping = {}
+
+    if checkpoint_type == "musicbert":
+        assert num_labels is not None, "num_labels must be provided for musicbert"
+        expected_missing_dst_keys = []
+        for i in range(len(num_labels)):
+            expected_missing_dst_keys.extend(
+                [
+                    f"classifier.multi_tag_sub_heads.{i}.dense.weight",
+                    f"classifier.multi_tag_sub_heads.{i}.dense.bias",
+                    f"classifier.multi_tag_sub_heads.{i}.out_proj.weight",
+                    f"classifier.multi_tag_sub_heads.{i}.out_proj.bias",
+                ]
+            )
+
+    elif checkpoint_type == "token_classifier":
+        assert num_labels is None, (
+            "num_labels must be None for token_classifier (we infer it from the checkpoint)"
+        )
+        assert z_vocab_size is None, "z_vocab_size must be None for token_classifier"
+
+        num_labels = []
+
+        z_vocab_size = src_state_dict["encoder.z_encoder.embedding.weight"].shape[0]
+
+        if (
+            "classification_heads.sequence_multitarget_tagging_head.multi_tag_sub_heads.0.out_proj.bias"
+            in src_state_dict
+        ):
+            multi_label = "multitarget"  # for backwards compatibility
+        else:
+            multi_label = "multitask"
+
+        z_encoder_keys = [key for key in src_state_dict if "z_encoder" in key]
+        for key in z_encoder_keys:
+            # remove "encoder." prefix
+            parameter_mapping[key] = key[8:]
+
+        for i in itertools.count():
+            layer = src_state_dict.get(
+                f"classification_heads.sequence_{multi_label}_tagging_head.multi_tag_sub_heads.{i}.out_proj.bias",
+                None,
+            )
+            if layer is None:
+                break
+            num_labels.append(layer.shape[0])
+            parameter_mapping |= {
+                f"classification_heads.sequence_{multi_label}_tagging_head.multi_tag_sub_heads.{i}.dense.weight": f"classifier.multi_tag_sub_heads.{i}.dense.weight",
+                f"classification_heads.sequence_{multi_label}_tagging_head.multi_tag_sub_heads.{i}.dense.bias": f"classifier.multi_tag_sub_heads.{i}.dense.bias",
+                f"classification_heads.sequence_{multi_label}_tagging_head.multi_tag_sub_heads.{i}.out_proj.weight": f"classifier.multi_tag_sub_heads.{i}.out_proj.weight",
+                f"classification_heads.sequence_{multi_label}_tagging_head.multi_tag_sub_heads.{i}.out_proj.bias": f"classifier.multi_tag_sub_heads.{i}.out_proj.bias",
+            }
+        assert num_labels
+        expected_missing_dst_keys = []
+
+    classifier_dropout = model_config.pooler_dropout
+    classifier_activation = model_config.pooler_activation_fn
+    expected_missing_src_keys = [
+        # The lm_head seems to be in the checkpoint in spite of not being used
+        "encoder.lm_head.weight",
+        "encoder.lm_head.bias",
+        "encoder.lm_head.dense.weight",
+        "encoder.lm_head.dense.bias",
+        "encoder.lm_head.layer_norm.weight",
+        "encoder.lm_head.layer_norm.bias",
+    ]
+    return _load_from_checkpoint(
+        model_config,
+        src_state_dict,
+        model_cls=MusicBertMultiTaskTokenClassConditioned,  # type:ignore
+        print_missing_keys=print_missing_keys,
+        parameter_mapping=parameter_mapping,
+        expected_missing_src_keys=expected_missing_src_keys,
+        expected_missing_dst_keys=expected_missing_dst_keys,
+        classifier_dropout=classifier_dropout,
+        classifier_activation=classifier_activation,
+        num_multi_labels=num_labels,
+        z_vocab_size=z_vocab_size,
+        config_cls=MusicBertMultiTaskTokenClassConditionedConfig,
     )

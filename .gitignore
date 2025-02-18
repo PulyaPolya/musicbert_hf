@@ -4,3 +4,7 @@ wandb/
 notes.md
 temp_scripts/
 scrap.sh
+pyrightconfig.json
+slurm_scripts/
+predict_configs/
+data_configs/

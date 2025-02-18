@@ -4,11 +4,11 @@ import torch
 
 from musicbert_hf.musicbert_class import (
     BERT_PARAMS,
-    MusicBertForMultiTaskTokenClassification,
-    MusicBertForTokenClassification,
     MusicBertMultiTaskTokenClassConditioned,
     MusicBertMultiTaskTokenClassConditionedConfig,
+    MusicBertMultiTaskTokenClassification,
     MusicBertMultiTaskTokenClassificationConfig,
+    MusicBertTokenClassification,
     MusicBertTokenClassificationConfig,
 )
 
@@ -68,7 +68,7 @@ def test_token_classifier():
         num_labels=num_labels,
         **BERT_PARAMS["tiny"],
     )
-    model = MusicBertForTokenClassification(config)
+    model = MusicBertTokenClassification(config)
     model.eval()
     torch.manual_seed(TORCH_SEED)
     losses = []
@@ -95,7 +95,7 @@ def test_multitask_token_classifier():
         num_multi_labels=num_multi_labels,
         **BERT_PARAMS["tiny"],
     )
-    model = MusicBertForMultiTaskTokenClassification(config)
+    model = MusicBertMultiTaskTokenClassification(config)
     model.eval()
     torch.manual_seed(TORCH_SEED)
     losses = []

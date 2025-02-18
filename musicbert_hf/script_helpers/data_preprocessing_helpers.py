@@ -9,7 +9,6 @@ class Config:
     input_base_folder: str
     output_base_folder: str
     features: list[str]
-    conditioning_features: list[str] | None = None
     vocabs: dict[str, str] | None = None
     vocab_dir: str | None = None
     concat_features: list[list[str]] = field(default_factory=list)
@@ -23,8 +22,6 @@ class Config:
         if self.vocabs is None:
             assert self.vocab_dir is not None
             self.vocabs = {}
-        if self.conditioning_features is None:
-            self.conditioning_features = []
         if "events" not in self.vocabs:
             self.vocabs["events"] = os.path.join(
                 os.path.dirname(__file__),
@@ -36,7 +33,7 @@ class Config:
             logging.info(f"Using default events vocab from {self.vocabs['events']}")
         if self.vocab_dir is not None:
             self.vocab_dir = os.path.expanduser(self.vocab_dir)
-            for feature in self.features + self.conditioning_features:
+            for feature in self.features:
                 if feature in self.vocabs:
                     continue
                 feature_vocab_path = os.path.join(self.vocab_dir, f"{feature}.txt")

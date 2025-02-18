@@ -1,8 +1,0 @@
-{
-  "input_base_folder": "~/tmp/foo/data/",
-  "output_base_folder": "~/tmp/foo_tokens/key_v1/",
-  "features": ["events", "key_pc_mode"],
-  "vocabs": {
-    "key_pc_mode": "/Volumes/Zarebski/musicbert/saved_predictions/45951812_cond_on_39958320/test/key_pc_mode_dictionary.txt"
-  }
-}

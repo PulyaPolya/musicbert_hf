@@ -1,0 +1,26 @@
+[project]
+name = "musicbert_hf"
+version = "0.0.1"
+description = "HuggingFace implementation of MusicBERT"
+authors = [{ name = "Malcolm Sailor", email = "malcolm.sailor@gmail.com" }]
+readme = "README.md"
+# We include omegaconf among the basic dependencies because it is required to load the
+# original MusicBERT checkpoints and we assume that users will want to be able to do
+# that.
+dependencies = ["torch", "transformers", "omegaconf"]
+license = { text = "MIT" }
+
+[tool.setuptools]
+packages = ["musicbert_hf"]
+
+[project.optional-dependencies]
+finetune = ["pandas", "h5py", "scikit-learn", "accelerate>=0.26.0"]
+predict = [
+    "pandas",
+    "sh",
+    "einops",
+    "music_df @ git+https://github.com/malcolmsailor/music_df.git",
+    "reprs @ git+https://github.com/malcolmsailor/reprs.git",
+    "metricker @ git+https://github.com/malcolmsailor/metricker.git",
+]
+dev = ["pytest", "lovely-tensors"]

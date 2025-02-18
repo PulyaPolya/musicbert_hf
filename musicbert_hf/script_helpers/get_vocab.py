@@ -1,3 +1,8 @@
+"""
+This module contains functions used by the `data_preprocessing.py` script for handling
+vocabularies.
+"""
+
 import glob
 import json
 import logging
@@ -13,7 +18,6 @@ def get_vocab(
     feature=None,
     path: str | None = None,
     sort: Literal["lexical", "frequency", "none"] = "lexical",
-    # TODO: (Malcolm 2025-01-13) double check these are the right specials
     specials: Iterable[str] = ("<unk>", "<pad>", "<s>", "</s>"),
 ):
     if path is not None and os.path.exists(path):
@@ -32,7 +36,6 @@ def get_vocab(
             # ...
             # So we need to handle both cases
             with open(path, "r") as f:
-                # TODO: (Malcolm 2025-01-13) double check these are the right specials
                 return [
                     "<unk>",
                     "<pad>",
@@ -84,7 +87,6 @@ def get_vocab(
 
 
 def handle_vocab(csv_folder=None, feature=None, path=None):
-    # TODO possible cache vocab
     itos = get_vocab(csv_folder, feature, path)
     stoi = {token: i for i, token in enumerate(itos)}
 

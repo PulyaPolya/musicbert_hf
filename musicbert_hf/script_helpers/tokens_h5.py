@@ -1,4 +1,5 @@
 import glob
+import json
 import logging
 import os
 
@@ -38,14 +39,18 @@ def to_tokens_h5(
         vocab_size = len(this_stoi)
         if feature_name in output_files:
             output_files[feature_name].create_dataset("vocab_size", data=vocab_size)
+            string_dt = h5py.special_dtype(vlen=str)
+            output_files[feature_name].create_dataset(
+                "vocab", data=json.dumps(this_stoi), dtype=string_dt
+            )
+            output_files[feature_name].create_dataset(
+                "name", data=feature_name, dtype=string_dt
+            )
 
     row_count = 0
     for csv_file in tqdm(csv_files):
         df = pd.read_csv(csv_file)
 
-        # FairSEQ appends a single </s> token to the end of the sequence, which means
-        #   it isn't there for the targets, but there are 7 for the input, so we
-        #   need to append 1 in either case
         for feature in features:
             if feature == "events":
                 seven_stop_tokens = "".join(
@@ -61,7 +66,20 @@ def to_tokens_h5(
             for feature in features:
                 this_stoi = stoi[feature]
                 tokens = row[feature].split()
-                tokens.append("</s>")
+                if feature == "events":
+                    # FairSEQ preprocessing appends a single </s> token to the end of
+                    # each sequence. To accommodate that, my data ends with 7 (not 8)
+                    # stop tokens in the case of events and no stop tokens otherwise.
+                    # Either way, we check for a missing stop token and append it.
+                    missing_stop_token_count = 0
+                    while tokens[-8 + missing_stop_token_count] != "</s>":
+                        missing_stop_token_count += 1
+                        if missing_stop_token_count == 8:
+                            break
+                    tokens.extend(["</s>"] * missing_stop_token_count)
+                else:
+                    if tokens[-1] != "</s>":
+                        tokens.append("</s>")
 
                 data = np.array(
                     [this_stoi.get(token, this_stoi["<unk>"]) for token in tokens]
@@ -84,7 +102,8 @@ def to_tokens_h5(
                 )
             row_count += 1
             if max_rows is not None and row_count >= max_rows:
-                # TODO: (Malcolm 2025-01-13) maybe split into multiple files?
+                # TODO: (Malcolm 2025-01-13) maybe split into multiple files if input is
+                # very large?
                 break
     logging.info(f"Wrote {row_count} rows to {output_folder}")
     for output_file in output_files.values():

@@ -1,3 +1,38 @@
+"""
+This script takes a JSON config file (see the example in `data_configs/local_rn_config.json`).
+
+The config file can have the following fields:
+
+- `input_base_folder` (required): the base folder for the input data. This folder is
+    expected to contain three subfolders: `train`, `valid`, and `test`. Each of these
+    subfolders, in turn, should contain a number of `.csv` files. See below for a
+    description of the expected csv format.
+- `output_base_folder` (required): the base folder for the output data
+- `features` (required): a list of features to process
+- `vocabs`: a dictionary mapping feature names to paths to vocab files. If a feature is
+  not listed in `vocabs`, the script will look for a file in the `vocab_dir` directory
+  with the basename `[feature_name].txt`. Note that it is not necessary to specify a
+  vocab for the `events` feature, as it is assumed to be the octuple-encoded input and
+  there is a default vocab file included with the package.
+- `vocab_dir`: the directory to look for vocab files in if they are not listed in the
+  `vocabs` dictionary.
+- `concat_features`: a list of lists of features to concatenate into a single feature.
+  For example, you could combine "key_pc" and "mode" into a single feature "key_pc_mode"
+
+There is an additional field `feature_must_divide_by` only used to validate the octuple
+input, which shouldn't generally be modified.
+
+# Expected CSV format
+
+Each row represents a sequence (e.g., a piece of music). The only required column is
+"events", which should contain a sequence of space-separated OctupleMIDI tokens. (We
+expect this sequence to begin with 8 start tokens. It can also end with 8 stop tokens;
+if it ends with fewer than 8 such tokens, the end will be padded with stop tokens.)
+Other columns represent space separated sequences of tokens of features that you want to
+predict. For example, `key` or `chord_quality`.
+
+"""
+
 import argparse
 import logging
 import pdb

@@ -1,3 +1,34 @@
+"""
+This script can be used to finetune a MusicBERT model on a token classification task.
+
+Config parameters are passed on the command line. They are parsed with OmegaConf and
+should have the format `key=value` (e.g., `data_dir=/path/to/data`).
+
+The required parameters are:
+- `data_dir`: the directory containing the training data. This directory should have
+  `train`, `valid`, and `test` subdirectories, each containing a set of `.h5` files,
+  including `events.h5` featuring the octuple-encoded input and one `.h5` file for each
+  target and/or conditioning feature. These `.h5` files should have (at least) the
+  following contents:
+    - `num_seqs`: the number of sequences in the dataset
+    - `vocab_size`: the number of tokens in the vocabulary
+    - `name`: the name of the feature
+    - `vocab`: a JSON-serialized mapping from tokens to integers (e.g.,
+      `{"Major": 0, "Minor": 1, "Diminished": 2, ...}`)
+    - integer keys between 0 and `num_seqs` - 1: the actual sequences of integer tokens
+- `output_dir_base`: the base directory for the output. The final output directory will
+  be `output_dir_base/job_id`. If `job_id` is not explicitly set, it is the ID of the
+  SLURM job if running on a cluster, or a string of the current time if not.
+- `checkpoint_path`: the path to the checkpoint to finetune from.
+- `targets`: a target or list of targets to finetune on. We expect each target to have a
+  corresponding `.h5` file in the `data_dir` directory. For example, if `targets` is
+  `["key", "chord_quality"]`, we expect to find `key.h5` and `chord_quality.h5` in the
+  `data_dir/train` directory.
+
+For the full list of config parameters, see the `Config` dataclass below.
+
+"""
+
 import os
 import sys
 import time
@@ -10,6 +41,7 @@ from transformers import Trainer, TrainingArguments
 
 from musicbert_hf.checkpoints import (
     load_musicbert_multitask_token_classifier_from_fairseq_checkpoint,
+    load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint,
     load_musicbert_token_classifier_from_fairseq_checkpoint,
 )
 from musicbert_hf.data import HDF5Dataset, collate_for_musicbert_fn
@@ -24,7 +56,7 @@ class Config:
     output_dir_base: str
     checkpoint_path: str
     targets: str | list[str]
-    conditioning: str | list[str] | None = None
+    conditioning: str | None = None
     log_dir: str = os.path.expanduser("~/tmp/musicbert_hf_logs")
     # We will always load from a checkpoint so we don't need to specify architecture
     # architecture: Literal["base", "tiny"] = "base"
@@ -38,22 +70,22 @@ class Config:
     #   the specified layer; if sequence of ints, freeze the specified layers
     freeze_layers: int | Sequence[int] | None = None
 
+    # In general, we want to leave job_id as None and set automatically, but for
+    #   local testing we can set it manually
+    job_id: str | None = None
+
     def __post_init__(self):
         assert self.num_epochs is not None or self.max_steps is not None, (
             "Either num_epochs or max_steps must be provided"
         )
-        self._job_id = os.environ.get("SLURM_JOB_ID", None)
-        if self._job_id is None:
-            # Use the current time as the job ID if not running on the cluster
-            self._job_id = str(time.time())
+        if self.job_id is None:
+            self.job_id = os.environ.get("SLURM_JOB_ID", None)
+            if self.job_id is None:
+                # Use the current time as the job ID if not running on the cluster
+                self.job_id = str(int(time.time()))
 
         if isinstance(self.targets, str):
             self.targets = [self.targets]
-
-        if isinstance(self.conditioning, str):
-            self.conditioning = [self.conditioning]
-        elif self.conditioning is None:
-            self.conditioning = []
 
     @property
     def train_dir(self) -> str:
@@ -69,7 +101,7 @@ class Config:
 
     @property
     def output_dir(self) -> str:
-        return os.path.join(self.output_dir_base, self._job_id)
+        return os.path.join(self.output_dir_base, self.job_id)
 
     def target_paths(self, split: Literal["train", "valid", "test"]) -> list[str]:
         return [
@@ -77,11 +109,12 @@ class Config:
             for target in self.targets
         ]
 
-    def conditioning_paths(self, split: Literal["train", "valid", "test"]) -> list[str]:
-        return [
-            os.path.join(self.data_dir, split, f"{cond}.h5")
-            for cond in self.conditioning
-        ]
+    def conditioning_path(self, split: Literal["train", "valid", "test"]) -> str | None:
+        return (
+            None
+            if not self.conditioning
+            else os.path.join(self.data_dir, split, f"{self.conditioning}.h5")
+        )
 
     @property
     def multitask(self) -> bool:
@@ -90,11 +123,12 @@ class Config:
 
 def get_dataset(config, split):
     data_dir = getattr(config, f"{split}_dir")
-    train_dataset = HDF5Dataset(
+    dataset = HDF5Dataset(
         os.path.join(data_dir, "events.h5"),
         config.target_paths(split),
+        conditioning_path=config.conditioning_path(split),
     )
-    return train_dataset
+    return dataset
 
 
 def get_config_and_training_kwargs():
@@ -124,8 +158,11 @@ if __name__ == "__main__":
     if config.checkpoint_path:
         if config.multitask:
             if config.conditioning:
-                raise NotImplementedError(
-                    "Conditioning is not yet implemented for multitask training"
+                model = load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint(
+                    config.checkpoint_path,
+                    checkpoint_type="musicbert",
+                    num_labels=train_dataset.vocab_sizes,
+                    z_vocab_size=train_dataset.conditioning_vocab_size,
                 )
             else:
                 model = (
@@ -135,6 +172,13 @@ if __name__ == "__main__":
                         num_labels=train_dataset.vocab_sizes,
                     )
                 )
+            model.config.multitask_label2id = train_dataset.stois
+            model.config.multitask_id2label = {
+                target: {
+                    v: k for k, v in model.config.multitask_label2id[target].items()
+                }
+                for target in train_dataset.stois
+            }
         else:
             if config.conditioning:
                 raise NotImplementedError(
@@ -146,8 +190,14 @@ if __name__ == "__main__":
                     checkpoint_type="musicbert",
                     num_labels=train_dataset.vocab_sizes[0],
                 )
+            model.config.label2id = list(train_dataset.stois.values())[0]
+            model.config.id2label = {v: k for k, v in model.config.label2id.items()}
     else:
         raise ValueError("checkpoint_path must be provided")
+
+    model.config.targets = list(config.targets)
+    if config.conditioning:
+        model.config.conditioning = config.conditioning
 
     freeze_layers(model, config.freeze_layers)
 
@@ -195,3 +245,12 @@ if __name__ == "__main__":
     )
 
     trainer.train()
+
+    del train_dataset, valid_dataset
+
+    test_dataset = get_dataset(config, "test")
+
+    results = trainer.evaluate(test_dataset, metric_key_prefix="test")
+    print(results)
+
+    print(f"Training complete. Output saved to {config.output_dir}")

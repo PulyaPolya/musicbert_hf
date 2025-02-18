@@ -11,8 +11,8 @@ from musicbert_hf.checkpoints import (
     load_musicbert_token_classifier_from_fairseq_checkpoint,
 )
 
-# from musicbert_hf.musicbert_class import MusicBertForTokenClassification
-from musicbert_hf.utils import zip_longest_with_error
+# from musicbert_hf.musicbert_class import MusicBertTokenClassification
+from musicbert_hf.utils.misc import zip_longest_with_error
 
 SMALL_CHECKPOINT = os.getenv("SMALL_CHECKPOINT")
 BASE_CHECKPOINT = os.getenv("BASE_CHECKPOINT")
@@ -20,19 +20,12 @@ BASE_CHECKPOINT = os.getenv("BASE_CHECKPOINT")
 SMALL_TOKEN_CLS = os.getenv("SMALL_TOKEN_CLS")
 SMALL_TOKEN_MULTI_CLS = os.getenv("SMALL_TOKEN_MULTI_CLS")
 SMALL_TOKEN_MULTI_CLS_COND = os.getenv("SMALL_TOKEN_MULTI_CLS_COND")
+BASE_TOKEN_MULTI_CLS_COND = os.getenv("BASE_TOKEN_MULTI_CLS_COND")
 
 FAIRSEQ_OUTPUT_DIR = os.path.join(
     os.path.dirname((os.path.realpath(__file__))), "fairseq_outputs"
 )
 
-"""
-To get fairseq outputs:
-python /Users/malcolm/google_drive/python/data_science/musicbert_fork/misc_scripts/get_example_output.py checkpoint="/Volumes/Reicha/large_checkpoints/musicbert_provided_checkpoints/checkpoint_last_musicbert_small.pt" output_path=/Users/malcolm/google_drive/python/data_science/musicbert_hf/tests/resources/fairseq_small_320.pt 
-python /Users/malcolm/google_drive/python/data_science/musicbert_fork/misc_scripts/get_example_output.py checkpoint="/Volumes/Reicha/large_checkpoints/musicbert_provided_checkpoints/checkpoint_last_musicbert_base.pt" output_path=/Users/malcolm/google_drive/python/data_science/musicbert_hf/tests/resources/fairseq_base_320.pt 
-
-Token classifier
-python /Users/malcolm/google_drive/python/data_science/musicbert_fork/misc_scripts/get_example_token_classifier_output.py output_path=~/google_drive/python/data_science/musicbert_hf/tests/resources/fairseq_token_small_320.pt
-"""
 
 ATOL = 1e-3
 assert ATOL <= 1e-2
@@ -99,7 +92,7 @@ def test_load_small_checkpoint():
     BASE_CHECKPOINT is None, reason="BASE_CHECKPOINT environment variable unset"
 )
 def test_load_base_checkpoint():
-    fairseq_output_path = os.path.join(FAIRSEQ_OUTPUT_DIR, f"fairseq_base_320.pt")
+    fairseq_output_path = os.path.join(FAIRSEQ_OUTPUT_DIR, "fairseq_base_320.pt")
     _do_load(
         BASE_CHECKPOINT,
         load_musicbert_from_fairseq_checkpoint,
@@ -196,63 +189,49 @@ def test_load_small_multitask_with_conditioning_token_classifier():
 
 
 @pytest.mark.skipif(
-    SMALL_CHECKPOINT is None, reason="SMALL_CHECKPOINT environment variable unset"
+    BASE_TOKEN_MULTI_CLS_COND is None,
+    reason="BASE_TOKEN_MULTI_CLS_COND environment variable unset",
 )
-def test_load_small_token_classifier_expected_loss():
-    num_labels = 10
-    model = load_musicbert_token_classifier_from_fairseq_checkpoint(
-        SMALL_CHECKPOINT,
-        checkpoint_type="musicbert",
-        num_labels=num_labels,
+@pytest.mark.slow
+def test_load_base_multitask_with_conditioning_token_classifier():
+    fairseq_output_path = os.path.join(
+        FAIRSEQ_OUTPUT_DIR, "fairseq_token_multi_cond_base_320.pt"
     )
-    model.eval()
-
-    seq_len = 10
-    batch_size = 2
-    n_iters = 100
-    losses = []
-    torch.manual_seed(TORCH_SEED)
-    for _ in range(n_iters):
-        input_ids = torch.randint(0, 1237, (batch_size, seq_len * 8))
-        labels = torch.randint(0, num_labels, (batch_size, seq_len))
-
-        output = model(input_ids, labels)
-        loss = model.compute_loss(output, labels, num_items_in_batch=batch_size)
-        losses.append(loss.item())
-    actual_loss = sum(losses) / n_iters
-    expected_loss = np.log(num_labels)
-
-    assert actual_loss == pytest.approx(expected_loss, abs=1e-2)
+    _do_load(
+        BASE_TOKEN_MULTI_CLS_COND,
+        load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint,
+        fairseq_output_path,
+        *_token_multi_class_input_and_labels_and_conditioning(),
+    )
 
 
-@pytest.mark.skipif(
-    SMALL_CHECKPOINT is None, reason="SMALL_CHECKPOINT environment variable unset"
+@pytest.mark.parametrize(
+    "model_load_f_and_kwargs",
+    [
+        (
+            load_musicbert_token_classifier_from_fairseq_checkpoint,
+            {"num_labels": 2},
+        ),
+        (
+            load_musicbert_multitask_token_classifier_from_fairseq_checkpoint,
+            {"num_labels": [2, 4, 8]},
+        ),
+        (
+            load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint,
+            {
+                "num_labels": [2, 4, 8],
+                "z_vocab_size": 16,
+            },
+        ),
+    ],
 )
-def test_load_small_multitask_token_classifier_expected_loss():
-    num_labels = [2, 5, 10]
-    model = load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
-        SMALL_CHECKPOINT,
-        checkpoint_type="musicbert",
-        num_labels=num_labels,
-    )
-    model.eval()
+def test_load_from_musicbert(model_load_f_and_kwargs):
+    """
+    Test that we can load each of the models from the original MusicBERT checkpoints
+    (before fine-tuning).
 
-    seq_len = 10
-    batch_size = 2
-    n_iters = 100
-
-    torch.manual_seed(TORCH_SEED)
-    losses = []
-    for _ in range(n_iters):
-        input_ids = torch.randint(0, 1237, (batch_size, seq_len * 8))
-        labels = [
-            torch.randint(0, num_labels[i], (batch_size, seq_len))
-            for i in range(len(num_labels))
-        ]
-
-        output = model(input_ids=input_ids, labels=labels)
-        losses.append(output["loss"].item())
-    actual_loss = sum(losses) / n_iters
-    expected_loss = np.log(num_labels).mean()
-
-    assert actual_loss == pytest.approx(expected_loss, abs=1e-2)
+    All this function does is call the model loading function to check that it
+    doesn't raise an exception.
+    """
+    model_load_f, kwargs = model_load_f_and_kwargs
+    model_load_f(SMALL_CHECKPOINT, checkpoint_type="musicbert", **kwargs)

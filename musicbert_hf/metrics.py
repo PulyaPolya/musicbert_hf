@@ -20,7 +20,7 @@ def compute_metrics(eval_pred):
         ]
     )
 
-    # TODO: (Malcolm 2025-01-22) consider averaging
+    # TODO: (Malcolm 2025-01-22) should consider best averaging strategy
     precision = precision_score(true_labels, true_predictions, average="macro")
     recall = recall_score(true_labels, true_predictions, average="macro")
     accuracy = accuracy_score(true_labels, true_predictions)

@@ -1,17 +1,23 @@
 import itertools
 from typing import Literal, Type, TypeVar
 
-import lovely_tensors
 import torch
 from transformers import BertConfig, BertPreTrainedModel
 
 from musicbert_hf.musicbert_class import (
     MusicBert,
-    MusicBertForMultiTaskTokenClassification,
-    MusicBertForTokenClassification,
     MusicBertMultiTaskTokenClassConditioned,
     MusicBertMultiTaskTokenClassConditionedConfig,
+    MusicBertMultiTaskTokenClassification,
+    MusicBertTokenClassification,
 )
+
+try:
+    import lovely_tensors
+
+    LOVELY_TENSORS_AVAILABLE = True
+except ImportError:
+    LOVELY_TENSORS_AVAILABLE = False
 
 T = TypeVar("T", bound=BertPreTrainedModel)
 
@@ -185,17 +191,17 @@ def _load_from_checkpoint(
     if print_state_dicts:
         print("REMAPPED_STATE_DICT")
         for name, param in remapped_state_dict.items():
-            print(name, lovely_tensors.lovely(param))
+            if LOVELY_TENSORS_AVAILABLE:
+                print(name, lovely_tensors.lovely(param))
+            else:
+                print(name, param)
         print("")
         print("HF STATE DICT")
         for name, param in model.state_dict().items():
-            print(name, lovely_tensors.lovely(param))
-
-    # For debugging
-    # for name, src_param in remapped_state_dict.items():
-    #     dst_param = dst_state_dict[name]
-    #     if src_param.shape != dst_param.shape:
-    #         breakpoint()
+            if LOVELY_TENSORS_AVAILABLE:
+                print(name, lovely_tensors.lovely(param))
+            else:
+                print(name, param)
 
     model.load_state_dict(remapped_state_dict, strict=False)
     return model
@@ -204,8 +210,9 @@ def _load_from_checkpoint(
 def load_musicbert_from_fairseq_checkpoint(
     checkpoint_path: str,
     print_missing_keys: bool = False,
+    weights_only: bool = False,
 ) -> MusicBert:
-    ckpt_state_dict = torch.load(checkpoint_path)
+    ckpt_state_dict = torch.load(checkpoint_path, weights_only=weights_only)
 
     config = ckpt_state_dict["cfg"]
     model_config = config["model"]
@@ -247,8 +254,10 @@ def load_musicbert_token_classifier_from_fairseq_checkpoint(
     print_missing_keys: bool = False,
     checkpoint_type: Literal["musicbert", "token_classifier"] = "token_classifier",
     num_labels: int | None = None,
-) -> MusicBertForTokenClassification:
-    ckpt_state_dict = torch.load(checkpoint_path)
+    weights_only: bool = False,
+    **config_kwargs,
+) -> MusicBertTokenClassification:
+    ckpt_state_dict = torch.load(checkpoint_path, weights_only=weights_only)
 
     config = ckpt_state_dict["cfg"]
     model_config = config["model"]
@@ -294,7 +303,7 @@ def load_musicbert_token_classifier_from_fairseq_checkpoint(
     return _load_from_checkpoint(
         model_config,
         src_state_dict,
-        model_cls=MusicBertForTokenClassification,  # type:ignore
+        model_cls=MusicBertTokenClassification,  # type:ignore
         print_missing_keys=print_missing_keys,
         parameter_mapping=parameter_mapping,
         expected_missing_src_keys=expected_missing_src_keys,
@@ -302,6 +311,7 @@ def load_musicbert_token_classifier_from_fairseq_checkpoint(
         classifier_dropout=classifier_dropout,
         classifier_activation=classifier_activation,
         num_labels=num_labels,
+        **config_kwargs,
     )
 
 
@@ -310,8 +320,10 @@ def load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
     print_missing_keys: bool = False,
     checkpoint_type: Literal["musicbert", "token_classifier"] = "token_classifier",
     num_labels: list[int] | None = None,
-) -> MusicBertForMultiTaskTokenClassification:
-    ckpt_state_dict = torch.load(checkpoint_path)
+    weights_only: bool = False,
+    **config_kwargs,
+) -> MusicBertMultiTaskTokenClassification:
+    ckpt_state_dict = torch.load(checkpoint_path, weights_only=weights_only)
 
     config = ckpt_state_dict["cfg"]
     model_config = config["model"]
@@ -377,7 +389,7 @@ def load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
     return _load_from_checkpoint(
         model_config,
         src_state_dict,
-        model_cls=MusicBertForMultiTaskTokenClassification,  # type:ignore
+        model_cls=MusicBertMultiTaskTokenClassification,  # type:ignore
         print_missing_keys=print_missing_keys,
         parameter_mapping=parameter_mapping,
         expected_missing_src_keys=expected_missing_src_keys,
@@ -385,6 +397,7 @@ def load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
         classifier_dropout=classifier_dropout,
         classifier_activation=classifier_activation,
         num_multi_labels=num_labels,
+        **config_kwargs,
     )
 
 
@@ -394,8 +407,10 @@ def load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_che
     checkpoint_type: Literal["musicbert", "token_classifier"] = "token_classifier",
     num_labels: list[int] | None = None,
     z_vocab_size: int | None = None,
+    weights_only: bool = False,
+    **config_kwargs,
 ) -> MusicBertMultiTaskTokenClassConditioned:
-    ckpt_state_dict = torch.load(checkpoint_path)
+    ckpt_state_dict = torch.load(checkpoint_path, weights_only=weights_only)
 
     config = ckpt_state_dict["cfg"]
     model_config = config["model"]
@@ -405,6 +420,7 @@ def load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_che
 
     if checkpoint_type == "musicbert":
         assert num_labels is not None, "num_labels must be provided for musicbert"
+        assert z_vocab_size is not None, "z_vocab_size must be provided for musicbert"
         expected_missing_dst_keys = []
         for i in range(len(num_labels)):
             expected_missing_dst_keys.extend(
@@ -415,7 +431,24 @@ def load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_che
                     f"classifier.multi_tag_sub_heads.{i}.out_proj.bias",
                 ]
             )
-
+        if "z_mlp_layers" in config_kwargs:
+            z_mlp_layers = config_kwargs["z_mlp_layers"]
+        else:
+            # instantiate default config and retrieve z_mlp_layers from it
+            config_cls = MusicBertMultiTaskTokenClassConditionedConfig
+            config = config_cls(**config_kwargs)
+            z_mlp_layers = config.z_mlp_layers
+        for i in range(z_mlp_layers):
+            expected_missing_dst_keys.extend(
+                [
+                    # I'm not actually sure why we have i.0 and i.2 but not i.1
+                    f"z_encoder.layers.{i}.0.weight",
+                    f"z_encoder.layers.{i}.0.bias",
+                    f"z_encoder.layers.{i}.2.weight",
+                    f"z_encoder.layers.{i}.2.bias",
+                ]
+            )
+        expected_missing_dst_keys.append("z_encoder.embedding.weight")
     elif checkpoint_type == "token_classifier":
         assert num_labels is None, (
             "num_labels must be None for token_classifier (we infer it from the checkpoint)"
@@ -480,4 +513,5 @@ def load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_che
         num_multi_labels=num_labels,
         z_vocab_size=z_vocab_size,
         config_cls=MusicBertMultiTaskTokenClassConditionedConfig,
+        **config_kwargs,
     )

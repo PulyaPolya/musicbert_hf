@@ -1,20 +1,19 @@
-import os
-from functools import partial
+import json
 
 import h5py
 import torch
-from torch.utils.data import DataLoader, Dataset
-from transformers import BertConfig, Trainer, TrainingArguments
+from torch.utils.data import Dataset
 
-INPUT_PAD = 1
-TARGET_PAD = -100
+from musicbert_hf.constants import INPUT_PAD, TARGET_PAD
 
 
-# TODO: (Malcolm 2025-01-17) this is multitask, need nonmultitask version
 def collate_for_musicbert_fn(batch, multitask=False):
     """
     Expects a batch of dicts with keys "input_ids", "attention_mask", and "labels".
+    Possibly also "conditioning_ids".
     """
+    has_conditioning = "conditioning_ids" in batch[0]
+
     # Get max length in this batch
     max_input_length = max(len(item["input_ids"]) for item in batch)
     max_attention_length = max(len(item["attention_mask"]) for item in batch)
@@ -51,11 +50,23 @@ def collate_for_musicbert_fn(batch, multitask=False):
         else:
             labels[i, : len(item["labels"])] = item["labels"]
 
-    return {
+    if has_conditioning:
+        max_conditioning_length = max(len(item["conditioning_ids"]) for item in batch)
+        conditioning_ids = torch.full(
+            (len(batch), max_conditioning_length), INPUT_PAD, dtype=torch.long
+        )
+        for i, item in enumerate(batch):
+            conditioning_ids[i, : len(item["conditioning_ids"])] = item[
+                "conditioning_ids"
+            ]
+    out = {
         "input_ids": input_ids,
         "attention_mask": attention_mask,
         "labels": labels,
     }
+    if has_conditioning:
+        out["conditioning_ids"] = conditioning_ids
+    return out
 
 
 class HDF5Dataset(Dataset):
@@ -63,6 +74,7 @@ class HDF5Dataset(Dataset):
         self,
         inputs_path: str,
         targets_path: str | list[str],
+        conditioning_path: str | None = None,
         dtype=None,
         device=None,
         compound_ratio: int = 8,
@@ -70,6 +82,9 @@ class HDF5Dataset(Dataset):
         super().__init__()
         self.inputs = h5py.File(inputs_path, "r")
         self.num_seqs = self.inputs["num_seqs"][()]
+        self.conditioning = (
+            h5py.File(conditioning_path, "r") if conditioning_path else None
+        )
         if isinstance(targets_path, str):
             targets_path = [targets_path]
         self.multitask = len(targets_path) > 1
@@ -81,6 +96,19 @@ class HDF5Dataset(Dataset):
         # We need to cast to int because numpy int types aren't JSON serializable and
         #   HuggingFace will serialize the parameters.
         self.vocab_sizes = [int(target["vocab_size"][()]) for target in self.targets]
+        target_names = [target["name"][()].decode() for target in self.targets]
+        self.stois = {
+            name: json.loads(target["vocab"][()].decode())
+            for name, target in zip(target_names, self.targets)
+        }
+        if self.conditioning is not None:
+            self.conditioning_vocab_size = int(self.conditioning["vocab_size"][()])
+            conditioning_name = self.conditioning["name"][()].decode()
+            self.stois[conditioning_name] = json.loads(
+                self.conditioning["vocab"][()].decode()
+            )
+        else:
+            self.conditioning_vocab_size = None
 
     def __len__(self):
         return self.num_seqs
@@ -111,17 +139,12 @@ class HDF5Dataset(Dataset):
 
         if not self.multitask:
             targets = targets[0]
-        return {
+        out = {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
             "labels": targets,
         }
-
-    def cleanup(self):
-        pass
-        # self.inputs.close()
-        # for target in self.targets:
-        #     target.close()
-
-    def __del__(self):
-        self.cleanup()
+        if self.conditioning is not None:
+            conditioning = torch.tensor(self.conditioning[f"{idx}"][()])
+            out["conditioning_ids"] = conditioning
+        return out

@@ -7,8 +7,6 @@ from torch.nn import CrossEntropyLoss
 from transformers import BertConfig, BertModel, BertPreTrainedModel
 from transformers.modeling_outputs import MaskedLMOutput, TokenClassifierOutput
 from transformers.models.bert.modeling_bert import (
-    _CHECKPOINT_FOR_DOC,
-    _CONFIG_FOR_DOC,
     BERT_INPUTS_DOCSTRING,
     BERT_START_DOCSTRING,
     BertEmbeddings,
@@ -16,18 +14,17 @@ from transformers.models.bert.modeling_bert import (
     BertOnlyMLMHead,
 )
 from transformers.utils import (
-    add_code_sample_docstrings,
     add_start_docstrings,
     add_start_docstrings_to_model_forward,
     logging,
 )
 
 from musicbert_hf import from_fairseq
-from musicbert_hf.data import INPUT_PAD
+from musicbert_hf.constants import INPUT_PAD
 
 # MonkeyPatch: replace BertModel.forward with our version
 from musicbert_hf.hf_monkeypatch import forward as hf_forward  # noqa: F401
-from musicbert_hf.utils import zip_longest_with_error
+from musicbert_hf.utils.misc import zip_longest_with_error
 
 logger = logging.get_logger(__name__)
 
@@ -104,13 +101,6 @@ class CompoundEmbeddings(BertEmbeddings):
         assert (token_type_ids is None) or not token_type_ids.any(), (
             "token_type_ids are not supported for compound mode"
         )
-
-        # TODO: (Malcolm 2024-03-13) rather than being implemented here, the padding
-        #   mask is meant to be computed prior to calling BertModel and provided
-        #   as the attention_mask argument.
-
-        # padding_mask = input_ids[:, ::ratio].eq(self.padding_idx)
-        # assert padding_mask.shape == (batch, seq)
 
         flat_embeds = self.word_embeddings(input_ids)
         unflattened = flat_embeds.view(
@@ -209,6 +199,13 @@ class MusicBertEncoder(BertModel):
         return output
 
 
+class MusicBertConfig(BertConfig):
+    # Just make sure tie_word_embeddings is False by default since it
+    #   is not implemented for MusicBert
+    def __init__(self, *args, tie_word_embeddings=False, **kwargs):
+        super().__init__(*args, tie_word_embeddings=False, **kwargs)
+
+
 @add_start_docstrings(
     """MusicBert model for MLM pre-training task.""", BERT_START_DOCSTRING
 )
@@ -236,11 +233,9 @@ class MusicBert(BertPreTrainedModel):
         self.post_init()
 
     def get_output_embeddings(self):
-        # TODO: (Malcolm 2024-03-14) verify
         return self.cls.predictions.decoder
 
     def set_output_embeddings(self, new_embeddings):
-        # TODO: (Malcolm 2024-03-14) verify
         self.cls.predictions.decoder = new_embeddings
 
     @add_start_docstrings_to_model_forward(
@@ -309,32 +304,6 @@ class MusicBert(BertPreTrainedModel):
             attentions=outputs.attentions,
         )
 
-    # TODO: (Malcolm 2025-01-17) I think I can remove, this is not a generative model
-    # def prepare_inputs_for_generation(
-    #     self, input_ids, attention_mask=None, **model_kwargs
-    # ):
-    #     raise NotImplementedError
-    #     input_shape = input_ids.shape
-    #     effective_batch_size = input_shape[0]
-
-    #     #  add a dummy token
-    #     if self.config.pad_token_id is None:
-    #         raise ValueError("The PAD token should be defined for generation")
-
-    #     attention_mask = torch.cat(
-    #         [attention_mask, attention_mask.new_zeros((attention_mask.shape[0], 1))],
-    #         dim=-1,
-    #     )
-    #     dummy_token = torch.full(
-    #         (effective_batch_size, 1),
-    #         self.config.pad_token_id,
-    #         dtype=torch.long,
-    #         device=input_ids.device,
-    #     )
-    #     input_ids = torch.cat([input_ids, dummy_token], dim=1)
-
-    #     return {"input_ids": input_ids, "attention_mask": attention_mask}
-
 
 class RobertaSequenceTaggingHead(nn.Module):
     """Head for sequence tagging/token-level classification tasks."""
@@ -378,13 +347,13 @@ class RobertaSequenceTaggingHead(nn.Module):
         return x
 
 
-class MusicBertTokenClassificationConfig(BertConfig):
+class MusicBertTokenClassificationConfig(MusicBertConfig):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.num_labels = kwargs.get("num_labels", 1)
 
 
-class MusicBertForTokenClassification(BertPreTrainedModel):
+class MusicBertTokenClassification(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
@@ -473,7 +442,7 @@ class MusicBertForTokenClassification(BertPreTrainedModel):
 
         sequence_output = outputs[0]
 
-        # TODO: (Malcolm 2024-03-16) do we want to add dropout here?
+        # QUESTION: (Malcolm 2024-03-16) do we want to add dropout here?
         # sequence_output = self.dropout(sequence_output)
         logits = self.classifier(sequence_output)
 
@@ -530,13 +499,13 @@ class RobertaSequenceMultiTaggingHead(nn.Module):
         return x
 
 
-class MusicBertMultiTaskTokenClassificationConfig(BertConfig):
+class MusicBertMultiTaskTokenClassificationConfig(MusicBertConfig):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.num_multi_labels = kwargs.get("num_multi_labels", 1)
 
 
-class MusicBertForMultiTaskTokenClassification(BertPreTrainedModel):
+class MusicBertMultiTaskTokenClassification(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
 
@@ -598,7 +567,6 @@ class MusicBertForMultiTaskTokenClassification(BertPreTrainedModel):
         return loss
 
     @add_start_docstrings_to_model_forward(
-        # TODO: (Malcolm 2025-01-17) verify that this is correct
         BERT_INPUTS_DOCSTRING.format("batch_size, sequence_length")
     )
     def forward(
@@ -672,7 +640,7 @@ class MusicBertForMultiTaskTokenClassification(BertPreTrainedModel):
         )
 
 
-class MusicBertMultiTaskTokenClassConditionedConfig(BertConfig):
+class MusicBertMultiTaskTokenClassConditionedConfig(MusicBertConfig):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.num_multi_labels = kwargs.get("num_multi_labels", 1)
@@ -812,7 +780,6 @@ class MusicBertMultiTaskTokenClassConditioned(BertPreTrainedModel):
         return loss
 
     @add_start_docstrings_to_model_forward(
-        # TODO: (Malcolm 2025-01-17) verify that this is correct
         BERT_INPUTS_DOCSTRING.format("batch_size, sequence_length")
     )
     def forward(
@@ -925,10 +892,10 @@ def freeze_layers(model: nn.Module, layers: Sequence[int] | int | None):
     for name, param in model.named_parameters():
         for layer in layers:
             if name.startswith(f"bert.encoder.layer.{layer}."):
-                print(name)
+                logging.debug(f"Freezing {name}")
                 param.requires_grad = False
         if name.startswith("bert.embeddings"):
-            print(name)
+            logging.debug(f"Freezing {name}")
             # (Malcolm 2025-01-22) if we freeze any layers, we also freeze the
             # embeddings. Eventually we might want to freeze the embeddings separately.
             param.requires_grad = False

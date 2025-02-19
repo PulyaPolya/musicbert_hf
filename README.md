@@ -110,4 +110,4 @@ If you want to view the output as a PDF (similar to the above screenshot), there
 - [img2pdf](https://pypi.org/project/img2pdf/)
 - [rsvg-convert](https://manpages.ubuntu.com/manpages/trusty/man1/rsvg-convert.1.html)
 
-Then set the `make_pdf` configuration field to true.
+Then set the `make_pdf` configuration field to true. Note that the version of the score displayed in the PDF will be the score as seen by the model, which is salami-sliced, dedoubled, and quantized.

@@ -15,6 +15,7 @@ If you want to fine-tune MusicBERT on a token classification task or make use of
 ## Load MusicBERT from scratch
 
 ```python
+import torch
 from musicbert_hf import MusicBert, MusicBertConfig
 
 config = MusicBertConfig()  # Set parameters as needed

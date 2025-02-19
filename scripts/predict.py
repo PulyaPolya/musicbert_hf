@@ -62,7 +62,7 @@ from musicbert_hf.decoding_helpers import (
     get_rn_annotations,
     keep_new_elements_only,
 )
-from musicbert_hf.musicbert_class import (
+from musicbert_hf.models import (
     MusicBertMultiTaskTokenClassConditioned,
     MusicBertTokenClassification,
 )

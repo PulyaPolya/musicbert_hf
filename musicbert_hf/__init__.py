@@ -1,4 +1,4 @@
-from musicbert_hf.musicbert_class import (
+from musicbert_hf.models import (
     MusicBert,
     MusicBertConfig,
     MusicBertMultiTaskTokenClassConditioned,

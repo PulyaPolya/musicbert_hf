@@ -46,7 +46,7 @@ from musicbert_hf.checkpoints import (
 )
 from musicbert_hf.data import HDF5Dataset, collate_for_musicbert_fn
 from musicbert_hf.metrics import compute_metrics, compute_metrics_multitask
-from musicbert_hf.musicbert_class import freeze_layers
+from musicbert_hf.models import freeze_layers
 
 
 @dataclass

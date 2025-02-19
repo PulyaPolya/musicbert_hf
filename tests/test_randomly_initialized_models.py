@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import torch
 
-from musicbert_hf.musicbert_class import (
+from musicbert_hf.models import (
     BERT_PARAMS,
     MusicBertMultiTaskTokenClassConditioned,
     MusicBertMultiTaskTokenClassConditionedConfig,

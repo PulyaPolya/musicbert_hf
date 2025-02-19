@@ -4,7 +4,7 @@ from typing import Literal, Type, TypeVar
 import torch
 from transformers import BertConfig, BertPreTrainedModel
 
-from musicbert_hf.musicbert_class import (
+from musicbert_hf.models import (
     MusicBert,
     MusicBertMultiTaskTokenClassConditioned,
     MusicBertMultiTaskTokenClassConditionedConfig,

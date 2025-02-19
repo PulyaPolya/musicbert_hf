@@ -20,7 +20,10 @@ def get_vocab(
     sort: Literal["lexical", "frequency", "none"] = "lexical",
     specials: Iterable[str] = ("<unk>", "<pad>", "<s>", "</s>"),
 ):
-    if path is not None and os.path.exists(path):
+    if path is not None and not os.path.exists(path):
+        raise FileNotFoundError(f"Vocab file {path} does not exist")
+
+    if path is not None:
         if path.endswith(".json"):
             logging.info(f"Loading JSON vocab from {path}")
             with open(path, "r") as f:
@@ -98,8 +101,3 @@ def handle_vocab(csv_folder=None, feature=None, path=None):
     stoi["<pad>"] = -100
 
     return itos, stoi
-
-
-if __name__ == "__main__":
-    itos, stoi = handle_vocab("/Users/malcolm/tmp/foo/data/test/", "events")
-    breakpoint()

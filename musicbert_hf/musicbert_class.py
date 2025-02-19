@@ -527,9 +527,7 @@ class MusicBertMultiTaskTokenClassification(BertPreTrainedModel):
             if config.classifier_dropout is not None
             else config.hidden_dropout_prob
         )
-        # TODO: (Malcolm 2024-03-16) verify that fairseq doesn't implement dropout here
-        # self.dropout = nn.Dropout(classifier_dropout)
-        # self.classifier = nn.Linear(config.hidden_size, config.num_labels)
+
         self.classifier = RobertaSequenceMultiTaggingHead(
             input_dim=config.hidden_size,
             inner_dim=config.hidden_size,

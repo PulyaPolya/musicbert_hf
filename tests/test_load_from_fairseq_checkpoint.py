@@ -22,6 +22,9 @@ SMALL_TOKEN_MULTI_CLS = os.getenv("SMALL_TOKEN_MULTI_CLS")
 SMALL_TOKEN_MULTI_CLS_COND = os.getenv("SMALL_TOKEN_MULTI_CLS_COND")
 BASE_TOKEN_MULTI_CLS_COND = os.getenv("BASE_TOKEN_MULTI_CLS_COND")
 
+FAIRSEQ_MULTI_TASK_TOKEN_CLS_COND = os.getenv("FAIRSEQ_MULTI_TASK_TOKEN_CLS_COND")
+
+
 FAIRSEQ_OUTPUT_DIR = os.path.join(
     os.path.dirname((os.path.realpath(__file__))), "fairseq_outputs"
 )
@@ -235,3 +238,16 @@ def test_load_from_musicbert(model_load_f_and_kwargs):
     """
     model_load_f, kwargs = model_load_f_and_kwargs
     model_load_f(SMALL_CHECKPOINT, checkpoint_type="musicbert", **kwargs)
+
+
+@pytest.mark.skipif(
+    FAIRSEQ_MULTI_TASK_TOKEN_CLS_COND is None,
+    reason="FAIRSEQ_MULTI_TASK_TOKEN_CLS_COND environment variable unset",
+)
+def test_load_fairseq_multitask_token_classifier_with_conditioning():
+    model = load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint(
+        FAIRSEQ_MULTI_TASK_TOKEN_CLS_COND
+    )
+    # TODO: (Malcolm 2025-02-19)
+    # model.eval()
+    # model(**_token_multi_class_input_and_labels_and_conditioning())

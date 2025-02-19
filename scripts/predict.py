@@ -5,8 +5,8 @@ Usage:
 
 ```bash
 python scripts/predict.py --config /path/to/config.json \
-    [--input_path /path/to/input.mid] \
-    [--output_folder /path/to/output_folder]
+    [--input-path /path/to/input.mid] \
+    [--output-folder /path/to/output_folder]
 ```
 
 The config file should has the following requiredfields:
@@ -17,9 +17,9 @@ The config file should has the following requiredfields:
 
 The config file may have the following optional fields:
 - `input_path`: path to the input MIDI file. This field is required if it is not provided
-    as a command line argument with the `--input_path` flag.
+    as a command line argument with the `--input-path` flag.
 - `output_folder`: path to the folder where the output will be saved. This field is
-    required if it is not provided as a command line argument with the `--output_folder`
+    required if it is not provided as a command line argument with the `--output-folder`
     flag.
 - `harmony_onset_checkpoint_path`: path to the harmony-onset-prediction checkpoint. If
     the Roman numeral model does not predict "harmony_onset", then this field is
@@ -39,9 +39,9 @@ import pdb
 import shutil
 import sys
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
-from typing import Any, Sequence
+from typing import Any, Literal, Sequence
 
 import pandas as pd
 import torch
@@ -51,6 +51,10 @@ from reprs.oct import OctupleEncodingSettings
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
+from musicbert_hf.checkpoints import (
+    load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint,
+    load_musicbert_token_classifier_from_fairseq_checkpoint,
+)
 from musicbert_hf.chord_df import get_chord_df
 from musicbert_hf.constants import INPUT_PAD, TARGET_PAD
 from musicbert_hf.decoding_helpers import (
@@ -90,6 +94,32 @@ class Config:
     key_checkpoint_path: str
     rn_checkpoint_path: str
     harmony_onset_checkpoint_path: str | None = None
+    # If any of the _checkpoint_path_type fields are None, then we assume that the
+    #    checkpoint is "fairseq" if the path ends in ".pt" and "huggingface"
+    #    otherwise.
+    key_checkpoint_path_type: Literal["fairseq", "huggingface"] | None = None
+    rn_checkpoint_path_type: Literal["fairseq", "huggingface"] | None = None
+    harmony_onset_checkpoint_path_type: Literal["fairseq", "huggingface"] | None = None
+
+    # For any "fairseq" checkpoints, we need vocabulary files
+    key_vocab_path: str | None = None
+    rn_degree_vocab_path: str | None = None
+    rn_quality_vocab_path: str | None = None
+    rn_inversion_vocab_path: str | None = None
+    harmony_onset_vocab_path: str | None = None
+
+    # If rn_checkpoint_path_type is "fairseq", then we need to provide target_names so
+    #    we can map the output logits to the correct target.
+    rn_target_names: list[str] | None = None
+
+    # Depending on the training run, the RN model may predict targets beyond
+    #   those we are going to use. We will skip those. Note that if we are using
+    #   a separate harmony onset model, we will remove harmony_onset from these
+    #   values. Note also that "degree" will be replaced with self.degree_feature_name
+    rn_target_names_to_use: set[str] = field(
+        default_factory=lambda: {"degree", "quality", "inversion", "harmony_onset"}
+    )
+
     make_pdf: bool = False
     batch_size: int = 4
     degree_feature_name: str = (
@@ -105,6 +135,56 @@ class Config:
     viterbi_alpha: float = 7.0
 
     harmony_onset_threshold: float = 0.3
+
+    def __post_init__(self):
+        if self.key_checkpoint_path_type is None:
+            self.key_checkpoint_path_type = (
+                "fairseq" if self.key_checkpoint_path.endswith(".pt") else "huggingface"
+            )
+        if self.rn_checkpoint_path_type is None:
+            self.rn_checkpoint_path_type = (
+                "fairseq" if self.rn_checkpoint_path.endswith(".pt") else "huggingface"
+            )
+        if (
+            self.harmony_onset_checkpoint_path_type is None
+            and self.harmony_onset_checkpoint_path is not None
+        ):
+            self.harmony_onset_checkpoint_path_type = (
+                "fairseq"
+                if self.harmony_onset_checkpoint_path.endswith(".pt")
+                else "huggingface"
+            )
+
+        if self.key_checkpoint_path_type == "fairseq":
+            assert self.key_vocab_path is not None, (
+                "key_vocab_path is required for fairseq checkpoints"
+            )
+        if self.rn_checkpoint_path_type == "fairseq":
+            assert self.rn_degree_vocab_path is not None, (
+                "rn_degree_vocab_path is required for fairseq checkpoints"
+            )
+            assert self.rn_quality_vocab_path is not None, (
+                "rn_quality_vocab_path is required for fairseq checkpoints"
+            )
+            assert self.rn_inversion_vocab_path is not None, (
+                "rn_inversion_vocab_path is required for fairseq checkpoints"
+            )
+        if self.harmony_onset_checkpoint_path_type == "fairseq":
+            assert self.harmony_onset_vocab_path is not None, (
+                "harmony_onset_vocab_path is required for fairseq checkpoints"
+            )
+
+        if self.rn_checkpoint_path_type == "fairseq":
+            assert self.rn_target_names is not None, (
+                "rn_target_names is required for fairseq checkpoints"
+            )
+
+        if self.harmony_onset_checkpoint_path is not None:
+            self.rn_target_names_to_use.remove("harmony_onset")
+
+        if "degree" in self.rn_target_names_to_use:
+            self.rn_target_names_to_use.remove("degree")
+            self.rn_target_names_to_use.add(self.degree_feature_name)
 
 
 def collate_for_musicbert_fn(batch, compound_ratio: int = 8):
@@ -309,7 +389,15 @@ def predict_keys(config: Config):
         batch_size=4,
         collate_fn=collate_for_musicbert_fn,
     )
-    key_model = MusicBertTokenClassification.from_pretrained(config.key_checkpoint_path)
+    if config.key_checkpoint_path_type == "fairseq":
+        key_model = load_musicbert_token_classifier_from_fairseq_checkpoint(
+            config.key_checkpoint_path,
+            vocab_path=config.key_vocab_path,
+        )
+    else:
+        key_model = MusicBertTokenClassification.from_pretrained(
+            config.key_checkpoint_path
+        )
     key_model.eval()
     with torch.no_grad():
         key_logits = []
@@ -516,10 +604,19 @@ def predict_harmony_onset(config: Config):
         batch_size=4,
         collate_fn=collate_for_musicbert_fn,
     )
-    harmony_onset_model = MusicBertTokenClassification.from_pretrained(
-        config.harmony_onset_checkpoint_path
-    )
+
+    if config.harmony_onset_checkpoint_path_type == "fairseq":
+        harmony_onset_model = load_musicbert_token_classifier_from_fairseq_checkpoint(
+            config.harmony_onset_checkpoint_path,
+            vocab_path=config.harmony_onset_vocab_path,
+        )
+    else:
+        harmony_onset_model = MusicBertTokenClassification.from_pretrained(
+            config.harmony_onset_checkpoint_path
+        )
+
     harmony_onset_model.eval()
+
     with torch.no_grad():
         harmony_onset_logits = []
         attention_masks = []
@@ -577,9 +674,25 @@ def predict_rn(
     keys: Sequence[str],
     harmony_onset_output: dict[str, Any] | None = None,
 ):
-    rn_model = MusicBertMultiTaskTokenClassConditioned.from_pretrained(
-        config.rn_checkpoint_path
-    )
+    if config.rn_checkpoint_path_type == "fairseq":
+        vocab_paths = {
+            config.degree_feature_name: config.rn_degree_vocab_path,
+            "quality": config.rn_quality_vocab_path,
+            "inversion": config.rn_inversion_vocab_path,
+            "key_pc_mode": config.key_vocab_path,
+        }
+        if config.harmony_onset_checkpoint_path is None:
+            vocab_paths["harmony_onset"] = config.harmony_onset_vocab_path
+
+        rn_model = load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint(
+            config.rn_checkpoint_path,
+            vocab_paths=vocab_paths,
+        )
+        rn_model.config.targets = config.rn_target_names
+    else:
+        rn_model = MusicBertMultiTaskTokenClassConditioned.from_pretrained(
+            config.rn_checkpoint_path
+        )
     if harmony_onset_output is None:
         assert "harmony_onset" in rn_model.config.targets
 
@@ -600,7 +713,7 @@ def predict_rn(
     )
     rn_model.eval()
     with torch.no_grad():
-        rn_logits = {target: [] for target in rn_model.config.targets}
+        rn_logits = {target: [] for target in config.rn_target_names_to_use}
         attention_masks = []
         slice_ids = []
         for batch in tqdm(dataloader, desc="RN model"):
@@ -610,7 +723,9 @@ def predict_rn(
                 attention_mask=batch["attention_mask"],
             )
             for target, logits in zip(rn_model.config.targets, outputs.logits):
-                rn_logits[target].extend(logits)
+                if target in config.rn_target_names_to_use:
+                    rn_logits[target].extend(logits)
+
             attention_masks.extend(batch["attention_mask"])
             slice_ids.extend(batch["slice_ids"])
 
@@ -807,13 +922,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument(
-        "--input_path",
+        "--input-path",
         type=str,
         required=False,
         help="Path to the input MIDI file. If not provided, then read from the config file.",
     )
     parser.add_argument(
-        "--output_folder",
+        "--output-folder",
         type=str,
         required=False,
         help="Path to the output folder. If not provided, then read from the config file.",

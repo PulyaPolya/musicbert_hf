@@ -1,3 +1,5 @@
+This module ports MusicBERT to HuggingFace and provides some token classification models that can be used for tasks like Roman Numeral analysis and other music theory tasks.
+
 The most important contents of this module are the following:
 
 1. A `huggingface` implementation of MusicBERT, `MusicBert`.
@@ -6,7 +8,7 @@ The most important contents of this module are the following:
 4. `scripts/finetune.py`, a script to fine-tune token-classification models like the ones I use in my dissertation.
 5. `scripts/predict.py`, a script that runs Roman-numeral prediction on a MIDI file.
 
-Note that, while I would suggest using this version of RNBert, since HuggingFace is an actively maintained library, to reproduce the results reported in [my 2024 ISMIR paper](https://malcolmsailor.com/2025/01/06/ISMIR.html), you'll want to run the scripts in [the FairSEQ version of this repository](https://github.com/malcolmsailor/rnbert).
+If you want to fine-tune MusicBERT on a token classification task or make use of RNBert yourself, I would suggest using the code in this repository, since HuggingFace is an actively maintained library. On the other hand, to reproduce the results reported in [my 2024 ISMIR paper](https://malcolmsailor.com/2025/01/06/ISMIR.html), you'll want to run the scripts in [the FairSEQ implementation of RNBert](https://github.com/malcolmsailor/rnbert).
 
 # Examples
 
@@ -83,14 +85,24 @@ Then save a config file according to the description in the docstring for `scrip
 ```bash
 python scripts/predict.py \
     --config /path/to/config.json \
-    [--input_path /path/to/input.mid] \
-    [--output_folder /path/to/output_folder]
+    [--input-path /path/to/input.mid] \
+    [--output-folder /path/to/output_folder]
 ```
 
 The script will save the logits and vocabulary for each predicted feature to the output folder. It will also save two CSV files, `annotated_music_df.csv`, which contains the (salami-sliced, quantized, dedoubled) notes of the score annotated with the harmonic analysis annotations, and `chord_df.csv` which contains only the harmonic analysis annotations. Finally, if `make_pdf` is true, it will save an annotated PDF of the score as `annotated.pdf`.
 
-If you want to view the output as a PDF, there are a number of external dependencies
-that must be in the path:
+To run with fine-tuned RNBert checkpoints, clone [https://github.com/malcolmsailor/rnbert_checkpoints](https://github.com/malcolmsailor/rnbert_checkpoints) into a subfolder called  `rnbert_checkpoints` and then run
+
+```bash
+python scripts/predict.py \
+    --config supporting_files/rnbert_config.json \
+    [--input-path /path/to/input.mid] \
+    [--output-folder /path/to/output_folder]
+```
+
+![Goldberg Variations, Variation 1, mm. 1--4.](supporting_files/goldbergs_variation_1.jpg)
+
+If you want to view the output as a PDF (similar to the above screenshot), there are a number of external dependencies that must be in the path:
 
 - [humdrum-tools](https://github.com/humdrum-tools/humdrum-tools)
 - [verovio](https://github.com/rism-digital/verovio)

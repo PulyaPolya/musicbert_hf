@@ -40,7 +40,7 @@ from musicbert_hf.checkpoints import load_musicbert_from_fairseq_checkpoint
 model = load_musicbert_from_fairseq_checkpoint("path/to/checkpoint.pt")
 ```
 
-2. You have a model pre-trained with the models from this repository, in which case you can simply do
+2. You have a checkpoint pre-trained with the model classes from this repository, in which case you can simply do
 
 ```python
 from musicbert_hf import MusicBertTokenClassification

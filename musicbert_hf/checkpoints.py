@@ -495,21 +495,39 @@ def load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_che
             # remove "encoder." prefix
             parameter_mapping[key] = key[8:]
 
+        if any(
+            "sequence_multitask_conditional_tagging_head" in key
+            for key in src_state_dict
+        ):
+            chained_output_heads = True
+            tagging_head = "conditional_tagging_head"
+        else:
+            chained_output_heads = False
+            tagging_head = "tagging_head"
+
         for i in itertools.count():
             layer = src_state_dict.get(
-                f"classification_heads.sequence_{multi_label}_tagging_head.multi_tag_sub_heads.{i}.out_proj.bias",
+                f"classification_heads.sequence_{multi_label}_{tagging_head}.multi_tag_sub_heads.{i}.out_proj.bias",
                 None,
             )
             if layer is None:
                 break
             num_labels.append(layer.shape[0])
             parameter_mapping |= {
-                f"classification_heads.sequence_{multi_label}_tagging_head.multi_tag_sub_heads.{i}.dense.weight": f"classifier.multi_tag_sub_heads.{i}.dense.weight",
-                f"classification_heads.sequence_{multi_label}_tagging_head.multi_tag_sub_heads.{i}.dense.bias": f"classifier.multi_tag_sub_heads.{i}.dense.bias",
-                f"classification_heads.sequence_{multi_label}_tagging_head.multi_tag_sub_heads.{i}.out_proj.weight": f"classifier.multi_tag_sub_heads.{i}.out_proj.weight",
-                f"classification_heads.sequence_{multi_label}_tagging_head.multi_tag_sub_heads.{i}.out_proj.bias": f"classifier.multi_tag_sub_heads.{i}.out_proj.bias",
+                f"classification_heads.sequence_{multi_label}_{tagging_head}.multi_tag_sub_heads.{i}.dense.weight": f"classifier.multi_tag_sub_heads.{i}.dense.weight",
+                f"classification_heads.sequence_{multi_label}_{tagging_head}.multi_tag_sub_heads.{i}.dense.bias": f"classifier.multi_tag_sub_heads.{i}.dense.bias",
+                f"classification_heads.sequence_{multi_label}_{tagging_head}.multi_tag_sub_heads.{i}.out_proj.weight": f"classifier.multi_tag_sub_heads.{i}.out_proj.weight",
+                f"classification_heads.sequence_{multi_label}_{tagging_head}.multi_tag_sub_heads.{i}.out_proj.bias": f"classifier.multi_tag_sub_heads.{i}.out_proj.bias",
             }
         assert num_labels
+
+        if chained_output_heads:
+            for i in range(len(num_labels) - 1):
+                parameter_mapping |= {
+                    f"classification_heads.sequence_{multi_label}_{tagging_head}.projections.{i}.weight": f"classifier.projections.{i}.weight",
+                    f"classification_heads.sequence_{multi_label}_{tagging_head}.projections.{i}.bias": f"classifier.projections.{i}.bias",
+                }
+
         expected_missing_dst_keys = []
 
     classifier_dropout = model_config.pooler_dropout
@@ -538,6 +556,7 @@ def load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_che
         z_embed_dim=z_embed_dim,
         z_mlp_norm=z_mlp_norm,
         z_combine_procedure=z_combine_procedure,
+        chained_output_heads=chained_output_heads,
         config_cls=MusicBertMultiTaskTokenClassConditionedConfig,
         **config_kwargs,
     )

@@ -10,6 +10,9 @@ The most important contents of this module are the following:
 
 If you want to fine-tune MusicBERT on a token classification task or make use of RNBert yourself, I would suggest using the code in this repository, since HuggingFace is an actively maintained library. On the other hand, to reproduce the results reported in [my 2024 ISMIR paper](https://malcolmsailor.com/2025/01/06/ISMIR.html), you'll want to run the scripts in [the FairSEQ implementation of RNBert](https://github.com/malcolmsailor/rnbert).
 
+Trained weights for RNBert are also available from the [HuggingFace hub](https://huggingface.co/msailor/rnbert_weights). See below.
+
+
 # Examples
 
 ## Load MusicBERT from scratch
@@ -27,7 +30,7 @@ model(input_ids=torch.randint(0, 10, (2, 800)), attention_mask=torch.ones(2, 100
 
 ## Load MusicBERT with pretrained weights
 
-There's two possibilities. 
+There's two possibilities.
 
 1. You have a model pre-trained with FairSEQ, like the original MusicBERT, whose checkpoint you can download from [https://1drv.ms/u/s!Av1IXjAYTqPsuBaM9pZB47xjX_b0?e=wg2D5O](https://1drv.ms/u/s!Av1IXjAYTqPsuBaM9pZB47xjX_b0?e=wg2D5O).
 
@@ -92,7 +95,7 @@ python scripts/predict.py \
 
 The script will save the logits and vocabulary for each predicted feature to the output folder. It will also save two CSV files, `annotated_music_df.csv`, which contains the (salami-sliced, quantized, dedoubled) notes of the score annotated with the harmonic analysis annotations, and `chord_df.csv` which contains only the harmonic analysis annotations. Finally, if `make_pdf` is true, it will save an annotated PDF of the score as `annotated.pdf`.
 
-To run with fine-tuned RNBert checkpoints, clone [https://github.com/malcolmsailor/rnbert_checkpoints](https://github.com/malcolmsailor/rnbert_checkpoints) into a subfolder called  `rnbert_checkpoints` and then run
+To run with fine-tuned RNBert checkpoints, run `python supporting_files/download_rnbert_weights.py` and then run
 
 ```bash
 python scripts/predict.py \

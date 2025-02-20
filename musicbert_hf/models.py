@@ -1,3 +1,4 @@
+from itertools import zip_longest
 from typing import List, Optional, Sequence, Tuple, Union
 
 import torch
@@ -499,10 +500,53 @@ class RobertaSequenceMultiTaggingHead(nn.Module):
         return x
 
 
+class RobertaSequenceConditionalMultiTaggingHead(RobertaSequenceMultiTaggingHead):
+    def __init__(
+        self,
+        input_dim,
+        inner_dim,
+        num_classes: Sequence[int],
+        activation_fn,
+        pooler_dropout,
+        q_noise=0,
+        qn_block_size=8,
+        do_spectral_norm=False,
+    ):
+        super().__init__(
+            input_dim,
+            inner_dim,
+            num_classes,
+            activation_fn,
+            pooler_dropout,
+            q_noise,
+            qn_block_size,
+            do_spectral_norm,
+        )
+        projections = []
+        for n_class in num_classes[:-1]:
+            projections.append(nn.Linear(input_dim + n_class, input_dim))
+        self.projections = nn.ModuleList(projections)
+
+    def forward(self, features, **kwargs):
+        out = []
+        for sub_head, proj in zip_longest(
+            self.multi_tag_sub_heads, self.projections, fillvalue=None
+        ):
+            assert sub_head is not None
+            logits = sub_head(features)
+            out.append(logits)
+
+            if proj is not None:
+                features = proj(torch.concat((features, logits), dim=-1))
+
+        return out
+
+
 class MusicBertMultiTaskTokenClassificationConfig(MusicBertConfig):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.num_multi_labels = kwargs.get("num_multi_labels", 1)
+        self.chained_output_heads = kwargs.get("chained_output_heads", False)
 
 
 class MusicBertMultiTaskTokenClassification(BertPreTrainedModel):
@@ -528,7 +572,12 @@ class MusicBertMultiTaskTokenClassification(BertPreTrainedModel):
             else config.hidden_dropout_prob
         )
 
-        self.classifier = RobertaSequenceMultiTaggingHead(
+        if config.chained_output_heads:
+            output_cls = RobertaSequenceConditionalMultiTaggingHead
+        else:
+            output_cls = RobertaSequenceMultiTaggingHead
+
+        self.classifier = output_cls(
             input_dim=config.hidden_size,
             inner_dim=config.hidden_size,
             num_classes=config.num_multi_labels,
@@ -642,6 +691,7 @@ class MusicBertMultiTaskTokenClassConditionedConfig(MusicBertConfig):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.num_multi_labels = kwargs.get("num_multi_labels", 1)
+        self.chained_output_heads = kwargs.get("chained_output_heads", False)
         self.z_mlp_layers = kwargs.get("z_mlp_layers", 2)
         self.z_embed_dim = kwargs.get("z_embed_dim", 128)
         self.z_mlp_norm = kwargs.get("z_mlp_norm", "yes")
@@ -737,11 +787,16 @@ class MusicBertMultiTaskTokenClassConditioned(BertPreTrainedModel):
         else:
             raise ValueError
 
-        self.classifier = RobertaSequenceMultiTaggingHead(
+        if config.chained_output_heads:
+            output_cls = RobertaSequenceConditionalMultiTaggingHead
+        else:
+            output_cls = RobertaSequenceMultiTaggingHead
+
+        self.classifier = output_cls(
             input_dim=self.output_dim,
             # I'm not sure how deliberate it was, but in my FairSEQ
             # implementation, we use the same inner_dim as the input_dim.
-            # There's a plausible case that it should instead by config.hidden_size,
+            # There's a plausible case that it should instead be config.hidden_size,
             # although it probably doesn't matter too much.
             inner_dim=self.output_dim,
             num_classes=config.num_multi_labels,

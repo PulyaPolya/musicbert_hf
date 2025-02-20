@@ -10,8 +10,6 @@ from musicbert_hf.checkpoints import (
     load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint,
     load_musicbert_token_classifier_from_fairseq_checkpoint,
 )
-
-# from musicbert_hf.musicbert_class import MusicBertTokenClassification
 from musicbert_hf.utils.misc import zip_longest_with_error
 
 SMALL_CHECKPOINT = os.getenv("SMALL_CHECKPOINT")
@@ -23,7 +21,7 @@ SMALL_TOKEN_MULTI_CLS_COND = os.getenv("SMALL_TOKEN_MULTI_CLS_COND")
 BASE_TOKEN_MULTI_CLS_COND = os.getenv("BASE_TOKEN_MULTI_CLS_COND")
 
 FAIRSEQ_MULTI_TASK_TOKEN_CLS_COND = os.getenv("FAIRSEQ_MULTI_TASK_TOKEN_CLS_COND")
-
+FAIRSEQ_MULTI_TASK_TOKEN_CLS_CHAINED = os.getenv("FAIRSEQ_MULTI_TASK_TOKEN_CLS_CHAINED")
 
 FAIRSEQ_OUTPUT_DIR = os.path.join(
     os.path.dirname((os.path.realpath(__file__))), "fairseq_outputs"
@@ -245,9 +243,24 @@ def test_load_from_musicbert(model_load_f_and_kwargs):
     reason="FAIRSEQ_MULTI_TASK_TOKEN_CLS_COND environment variable unset",
 )
 def test_load_fairseq_multitask_token_classifier_with_conditioning():
+    """
+    All this function does is call the model loading function to check that it
+    doesn't raise an exception.
+    """
     model = load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint(
         FAIRSEQ_MULTI_TASK_TOKEN_CLS_COND
     )
-    # TODO: (Malcolm 2025-02-19)
-    # model.eval()
-    # model(**_token_multi_class_input_and_labels_and_conditioning())
+
+
+@pytest.mark.skipif(
+    FAIRSEQ_MULTI_TASK_TOKEN_CLS_CHAINED is None,
+    reason="FAIRSEQ_MULTI_TASK_TOKEN_CLS_CHAINED environment variable unset",
+)
+def test_load_fairseq_multitask_token_classifier_chained():
+    """
+    All this function does is call the model loading function to check that it
+    doesn't raise an exception.
+    """
+    model = load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint(
+        FAIRSEQ_MULTI_TASK_TOKEN_CLS_CHAINED
+    )

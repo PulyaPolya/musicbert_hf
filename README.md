@@ -4,11 +4,11 @@ The most important contents of this module are the following:
 
 1. A `huggingface` implementation of MusicBERT, `MusicBert`.
 2. Several subclasses of MusicBERT that can be used for token-level tasks like Roman-numeral analysis: `MusicBertTokenClassification`, `MusicBertMultiTaskTokenClassification`, and `MusicBertMultiTaskTokenClassConditioned`.
-3. Functions to load the above classes from MusicBERT `fairseq` checkpoints. `fairseq` is the library of the original MusicBERT implementation, and also the library in which that I did the training described in [my 2024 ISMIR paper](https://malcolmsailor.com/2025/01/06/ISMIR.html) and in my upcoming dissertation.
+3. Functions to load the above classes from MusicBERT `fairseq` checkpoints. `fairseq` is the library of the original MusicBERT implementation, and also the library in which that I did the training described in [my 2024 ISMIR paper](https://doi.org/10.5281/zenodo.14877455) and in my upcoming dissertation.
 4. `scripts/finetune.py`, a script to fine-tune token-classification models like the ones I use in my dissertation.
 5. `scripts/predict.py`, a script that runs Roman-numeral prediction on a MIDI file.
 
-If you want to fine-tune MusicBERT on a token classification task or make use of RNBert yourself, I would suggest using the code in this repository, since HuggingFace is an actively maintained library. On the other hand, to reproduce the results reported in [my 2024 ISMIR paper](https://malcolmsailor.com/2025/01/06/ISMIR.html), you'll want to run the scripts in [the FairSEQ implementation of RNBert](https://github.com/malcolmsailor/rnbert).
+If you want to fine-tune MusicBERT on a token classification task or make use of RNBert yourself, I would suggest using the code in this repository, since HuggingFace is an actively maintained library. On the other hand, to reproduce the results reported in [my 2024 ISMIR paper](https://doi.org/10.5281/zenodo.14877455), you'll want to run the scripts in [the FairSEQ implementation of RNBert](https://github.com/malcolmsailor/rnbert).
 
 Trained weights for RNBert are also available from the [HuggingFace hub](https://huggingface.co/msailor/rnbert_weights). See below.
 

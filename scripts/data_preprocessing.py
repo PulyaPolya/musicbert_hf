@@ -1,5 +1,6 @@
 """
-This script takes a JSON config file (see the example in `data_configs/local_rn_config.json`).
+This script takes a JSON config file (see the example in
+`supporting_files/example_data_config.json`).
 
 The config file can have the following fields:
 
@@ -27,9 +28,9 @@ input, which shouldn't generally be modified.
 Each row represents a sequence (e.g., a piece of music). The only required column is
 "events", which should contain a sequence of space-separated OctupleMIDI tokens. (We
 expect this sequence to begin with 8 start tokens. It can also end with 8 stop tokens;
-if it ends with fewer than 8 such tokens, the end will be padded with stop tokens.)
-Other columns represent space separated sequences of tokens of features that you want to
-predict. For example, `key` or `chord_quality`.
+if it ends with fewer than 8 such tokens, the end will be padded with stop tokens until
+there are 8.) Other columns represent space separated sequences of tokens of features
+that you want to predict. For example, `key` or `chord_quality`.
 
 """
 

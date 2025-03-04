@@ -945,10 +945,10 @@ def freeze_layers(model: nn.Module, layers: Sequence[int] | int | None):
     for name, param in model.named_parameters():
         for layer in layers:
             if name.startswith(f"bert.encoder.layer.{layer}."):
-                logging.debug(f"Freezing {name}")
+                logger.debug(f"Freezing {name}")
                 param.requires_grad = False
         if name.startswith("bert.embeddings"):
-            logging.debug(f"Freezing {name}")
+            logger.debug(f"Freezing {name}")
             # (Malcolm 2025-01-22) if we freeze any layers, we also freeze the
             # embeddings. Eventually we might want to freeze the embeddings separately.
             param.requires_grad = False

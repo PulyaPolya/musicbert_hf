@@ -1,0 +1,9 @@
+{
+"input_base_folder":  "C:/Users/polin/datasets - Copy/rnbert_seqs",
+"output_base_folder": "C:/Users/polin/datasets/output",
+"features":["chord_tone", "harmony_onset"],
+"vocabs": {"chord_tone": "C:/Users/polin/datasets - Copy/rnbert_csvs/chord_tones_vocab.json", "harmony_onset":"C:/Users/polin/datasets - Copy/rnbert_csvs/harmony_onsets_vocab.json"},
+"vocab_dir": "C:/Users/polin/datasets - Copy/rnbert_abstract_data_raw",
+"concat_features": []
+
+}

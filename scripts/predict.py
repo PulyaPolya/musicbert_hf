@@ -9,7 +9,7 @@ python scripts/predict.py --config /path/to/config.json \
     [--output-folder /path/to/output_folder]
 ```
 
-The config file should has the following requiredfields:
+The config file should has the following required fields:
 
 - `key_checkpoint_path`: path to the key-prediction checkpoint
 - `rn_checkpoint_path`: path to the Roman-numeral-prediction checkpoint. If this model

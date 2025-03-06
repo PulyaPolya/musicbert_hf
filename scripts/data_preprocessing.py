@@ -94,9 +94,10 @@ def main(config: Config):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, required=True)
-    args = parser.parse_args()
-    logging.basicConfig(level=logging.INFO)
-    config = load_config_from_json(args.config)
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument("--config", type=str, required=True)
+    # args = parser.parse_args()
+    # logging.basicConfig(level=logging.INFO)
+    # config = load_config_from_json(args.config)
+    config =  load_config_from_json("config_data.json")
     main(config)

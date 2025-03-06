@@ -1,0 +1,26 @@
+{
+  "input_base_folder": "~/output/musicbert_hf/raw_data/data",
+  "output_base_folder": "~/output/musicbert_hf/rns_v1/",
+  "features": [
+    "events",
+    "quality",
+    "inversion",
+    "key_pc_mode",
+    "harmony_onset"
+  ],
+  "concat_features": [
+    [
+      "primary_alteration",
+      "primary_degree",
+      "secondary_alteration",
+      "secondary_degree"
+    ]
+  ],
+  "vocabs": {
+    "quality": "~/output/musicbert_hf/vocabs/quality_dictionary.txt",
+    "primary_alteration_primary_degree_secondary_alteration_secondary_degree": "~/output/musicbert_hf/vocabs/primary_alteration_primary_degree_secondary_alteration_secondary_degree_dictionary.txt",
+    "inversion": "~/output/musicbert_hf/vocabs/inversion_dictionary.txt",
+    "key_pc_mode": "~/output/musicbert_hf/vocabs/key_pc_mode_dictionary.txt",
+    "harmony_onset": "~/output/musicbert_hf/vocabs/harmony_onset_dictionary.txt"
+  }
+}

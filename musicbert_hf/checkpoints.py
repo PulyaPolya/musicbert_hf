@@ -6,10 +6,13 @@ from transformers import BertConfig, BertPreTrainedModel
 
 from musicbert_hf.models import (
     MusicBert,
+    MusicBertConfig,
     MusicBertMultiTaskTokenClassConditioned,
     MusicBertMultiTaskTokenClassConditionedConfig,
     MusicBertMultiTaskTokenClassification,
+    MusicBertMultiTaskTokenClassificationConfig,
     MusicBertTokenClassification,
+    MusicBertTokenClassificationConfig,
 )
 from musicbert_hf.script_helpers.get_vocab import handle_vocab
 
@@ -247,6 +250,7 @@ def load_musicbert_from_fairseq_checkpoint(
         print_missing_keys=print_missing_keys,
         expected_missing_dst_keys=expected_missing_dst_keys,
         parameter_mapping=parameter_mapping,
+        config_cls=MusicBertConfig,
     )
 
 
@@ -313,6 +317,7 @@ def load_musicbert_token_classifier_from_fairseq_checkpoint(
         classifier_dropout=classifier_dropout,
         classifier_activation=classifier_activation,
         num_labels=num_labels,
+        config_cls=MusicBertTokenClassificationConfig,
         **config_kwargs,
     )
     if vocab_path is not None:
@@ -405,6 +410,7 @@ def load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
         classifier_dropout=classifier_dropout,
         classifier_activation=classifier_activation,
         num_multi_labels=num_labels,
+        config_cls=MusicBertMultiTaskTokenClassificationConfig,
         **config_kwargs,
     )
     if vocab_paths is not None:
@@ -469,6 +475,9 @@ def load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_che
                 ]
             )
         expected_missing_dst_keys.append("z_encoder.embedding.weight")
+
+        chained_output_heads = False
+
     elif checkpoint_type == "token_classifier":
         assert num_labels is None, (
             "num_labels must be None for token_classifier (we infer it from the checkpoint)"

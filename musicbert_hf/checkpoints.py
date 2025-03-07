@@ -181,6 +181,13 @@ def _load_from_checkpoint(
     only_in_expected_missing_dst_keys = set(expected_missing_dst_keys) - set(
         missing_dst_keys
     )
+    sets_to_check = [only_in_missing_src_keys,
+            only_in_expected_missing_src_keys,
+            only_in_missing_dst_keys,
+            only_in_expected_missing_dst_keys]
+    for id, set_to_check in enumerate(sets_to_check):
+        if len(set_to_check) !=0:
+            print(id)
     assert not any(
         [
             only_in_missing_src_keys,

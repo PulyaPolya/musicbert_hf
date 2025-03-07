@@ -131,8 +131,15 @@ def get_dataset(config, split):
     return dataset
 
 
-def get_config_and_training_kwargs():
-    conf = OmegaConf.from_cli(sys.argv[1:])
+def get_config_and_training_kwargs(config_path=None):
+    if config_path:
+        file_conf = OmegaConf.load(config_path)
+    else:
+        file_conf = OmegaConf.create()  
+    #conf = OmegaConf.from_cli(sys.argv[1:])
+    cli_conf = OmegaConf.from_cli(sys.argv[1:])
+    # Merge file config with command-line overrides, with CLI taking precedence
+    conf = OmegaConf.merge(file_conf, cli_conf)
     config_fields = set(Config.__dataclass_fields__.keys())
     config_kwargs = {k: v for k, v in conf.items() if k in config_fields}
     training_kwargs = {k: v for k, v in conf.items() if k not in config_fields}
@@ -141,7 +148,7 @@ def get_config_and_training_kwargs():
 
 
 if __name__ == "__main__":
-    config, training_kwargs = get_config_and_training_kwargs()
+    config, training_kwargs = get_config_and_training_kwargs(config_path= "scripts/finetune_params.json")
 
     if config.wandb_project:
         os.environ["WANDB_PROJECT"] = config.wandb_project

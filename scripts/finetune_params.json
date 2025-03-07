@@ -1,0 +1,8 @@
+{
+"data_dir": "C:/Users/polin/datasets/rnbert_seqs/data",
+"output_dir_base" : "C:/Users/polin/datasets/results",
+"targets":["key", "harmony_onset", "events"],
+"checkpoint_path" : "checkpoints/rn_conditioned_checkpoint_40356401.pt",
+"conditioning": "key"
+
+}

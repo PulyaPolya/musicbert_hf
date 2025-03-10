@@ -35,10 +35,9 @@ import time
 from dataclasses import dataclass
 from functools import partial
 from typing import Literal, Sequence
-
+from torchinfo import summary
 from omegaconf import OmegaConf
 from transformers import Trainer, TrainingArguments
-
 from musicbert_hf.checkpoints import (
     load_musicbert_multitask_token_classifier_from_fairseq_checkpoint,
     load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint,
@@ -57,7 +56,7 @@ class Config:
     checkpoint_path: str
     targets: str | list[str]
     conditioning: str | None = None
-    log_dir: str = os.path.expanduser("~/tmp/musicbert_hf_logs")
+    log_dir: str = os.path.expanduser("logs/musicbert_hf_logs")
     # We will always load from a checkpoint so we don't need to specify architecture
     # architecture: Literal["base", "tiny"] = "base"
     num_epochs: int = 0
@@ -207,7 +206,9 @@ if __name__ == "__main__":
         model.config.conditioning = config.conditioning
 
     freeze_layers(model, config.freeze_layers)
-
+    summary(model)
+    total_layers = sum ( 1 for _ in model.named_modules())
+    print(f"total number of layers {total_layers}")
     training_kwargs = (
         dict(
             output_dir=config.output_dir,

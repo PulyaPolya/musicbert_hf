@@ -1,8 +1,11 @@
 {
 "data_dir": "C:/Users/polin/datasets/rnbert_seqs/data",
 "output_dir_base" : "C:/Users/polin/datasets/results",
-"targets":["key", "harmony_onset", "events"],
-"checkpoint_path" : "checkpoints/rn_conditioned_checkpoint_40356401.pt",
-"conditioning": "key"
+"targets":["key", "harmony_onset"],
+"checkpoint_path" : "musicbert_checkpoint/checkpoint_last_musicbert_base.pt",
+"conditioning": "key",
+"num_epochs": 20,
+"max_steps" : 1,
+"freeze_layers" : 12
 
 }

@@ -188,6 +188,7 @@ def _load_from_checkpoint(
     for id, set_to_check in enumerate(sets_to_check):
         if len(set_to_check) !=0:
             print(id)
+    heads = [tensor for tensor in src_state_dict.keys() if tensor.startswith("classification_head")]
     assert not any(
         [
             only_in_missing_src_keys,

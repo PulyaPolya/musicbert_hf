@@ -1,9 +1,0 @@
-{
-"input_base_folder":  "C:/Users/polin/datasets - Copy/rnbert_seqs/data",
-"output_base_folder": "C:/Users/polin/datasets/rnbert_seqs/data",
-"features":["key", "harmony_onset", "events"],
-"concat_features": [],
-"vocabs": {"key": "C:/Users/polin/datasets/rnbert_csvs/key_vocab_39958320.txt",  "harmony_onset":"C:/Users/polin/datasets/rnbert_csvs/onset_vocab_46548034.txt"},
-"vocab_dir": "C:/Users/polin/datasets - Copy/rnbert_abstract_data_raw"
-
-}

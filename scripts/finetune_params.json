@@ -1,10 +1,9 @@
 {
-"data_dir": "C:/Users/polin/datasets/rnbert_seqs/data",
+"data_dir": "C:/Users/polin/datasets/rnbert_seqs/data_new_vocab",
 "output_dir_base" : "C:/Users/polin/datasets/results",
-"targets":["key", "harmony_onset"],
+"targets":["key"],
 "checkpoint_path" : "musicbert_checkpoint/checkpoint_last_musicbert_base.pt",
-"conditioning": "key",
-"num_epochs": 20,
+"num_epochs": 3,
 "max_steps" : 1,
 "freeze_layers" : 12
 

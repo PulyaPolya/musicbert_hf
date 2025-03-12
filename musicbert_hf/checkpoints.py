@@ -62,7 +62,7 @@ def _load_from_checkpoint(
         **config_kwargs,
     )
 
-    model = model_cls(bert_config)
+    model = model_cls(bert_config)   #this is where the model is created
     dst_state_dict = model.state_dict()
 
     if parameter_mapping is None:

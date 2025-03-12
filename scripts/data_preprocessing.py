@@ -100,5 +100,5 @@ if __name__ == "__main__":
     # args = parser.parse_args()
     # logging.basicConfig(level=logging.INFO)
     # config = load_config_from_json(args.config)
-    config =  load_config_from_json("config_data.json")
+    config =  load_config_from_json("data_preprocessing_params.json")
     main(config)

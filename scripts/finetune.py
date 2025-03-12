@@ -164,7 +164,7 @@ if __name__ == "__main__":
     if config.checkpoint_path:
         if config.multitask:
             if config.conditioning:
-                model = load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint(
+                model = load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint(   #already here the model has the same structure as rnbert has
                     config.checkpoint_path,
                     checkpoint_type="musicbert",
                     num_labels=train_dataset.vocab_sizes,
@@ -256,9 +256,9 @@ if __name__ == "__main__":
 
     del train_dataset, valid_dataset
 
-    test_dataset = get_dataset(config, "test")
+    #test_dataset = get_dataset(config, "test")
 
-    results = trainer.evaluate(test_dataset, metric_key_prefix="test")
-    print(results)
+    # results = trainer.evaluate(test_dataset, metric_key_prefix="test")
+    # print(results)
 
-    print(f"Training complete. Output saved to {config.output_dir}")
+    # print(f"Training complete. Output saved to {config.output_dir}")

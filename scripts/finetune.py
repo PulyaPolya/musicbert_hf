@@ -38,6 +38,9 @@ from typing import Literal, Sequence
 from torchinfo import summary
 from omegaconf import OmegaConf
 from transformers import Trainer, TrainingArguments
+import ray
+from ray import tune
+from ray.tune.schedulers import ASHAScheduler
 from musicbert_hf.checkpoints import (
     load_musicbert_multitask_token_classifier_from_fairseq_checkpoint,
     load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint,
@@ -219,12 +222,12 @@ if __name__ == "__main__":
             logging_dir=config.log_dir,
             max_steps=config.max_steps,
             push_to_hub=False,
-            eval_on_start=True,
-            eval_strategy="steps",
+            eval_on_start=False,
+            eval_strategy="epoch",   # used to be steps
             metric_for_best_model="accuracy",
             greater_is_better=True,
             save_total_limit=2,
-            load_best_model_at_end=True,
+            #load_best_model_at_end=True,
         )
         | training_kwargs
     )
@@ -254,7 +257,7 @@ if __name__ == "__main__":
 
     trainer.train()
 
-    del train_dataset, valid_dataset
+    # del train_dataset, valid_dataset
 
     #test_dataset = get_dataset(config, "test")
 

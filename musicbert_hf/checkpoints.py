@@ -3,7 +3,7 @@ from typing import Literal, Type, TypeVar
 
 import torch
 from transformers import BertConfig, BertPreTrainedModel
-
+from torchinfo import summary
 from musicbert_hf.models import (
     MusicBert,
     MusicBertConfig,
@@ -62,7 +62,10 @@ def _load_from_checkpoint(
         **config_kwargs,
     )
 
-    model = model_cls(bert_config)   #this is where the model is created
+    model = model_cls(bert_config)
+    summary(model)
+    total_layers = sum ( 1 for _ in model.named_modules())
+    print(f"total number of layers {total_layers}")   #this is where the model is created (polina)
     dst_state_dict = model.state_dict()
 
     if parameter_mapping is None:
@@ -193,7 +196,7 @@ def _load_from_checkpoint(
         [
             only_in_missing_src_keys,
             only_in_expected_missing_src_keys,
-            only_in_missing_dst_keys,
+            #only_in_missing_dst_keys,
             only_in_expected_missing_dst_keys,
         ]
     ), (

@@ -324,6 +324,7 @@ class RobertaSequenceTaggingHead(nn.Module):
         self.dense = nn.Linear(input_dim, inner_dim)
         self.activation_fn = from_fairseq.get_activation_fn(activation_fn)
         self.dropout = nn.Dropout(p=pooler_dropout)
+        self.dense_inner = nn.Linear(inner_dim, inner_dim)
         if q_noise != 0:
             raise NotImplementedError
         self.out_proj = nn.Linear(inner_dim, num_classes)
@@ -342,6 +343,8 @@ class RobertaSequenceTaggingHead(nn.Module):
         # Would it make sense to add layer_norm here just like in the RobertaLMHead?
         x = self.dropout(x)
         x = self.dense(x)
+        x = self.activation_fn(x)
+        x = self.dense_inner(x)
         x = self.activation_fn(x)
         x = self.dropout(x)
         x = self.out_proj(x)

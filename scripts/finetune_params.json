@@ -1,5 +1,5 @@
 {
-"data_dir": "dataset_small/rnbert_seqs/data_smaller",
+"data_dir": "dataset_small/rnbert_seqs/data_smaller_no_quotations",
 "output_dir_base" : "dataset_small/results",
 "targets":["quality"],
 "checkpoint_path" : "musicbert_checkpoint/checkpoint_last_musicbert_base.pt",

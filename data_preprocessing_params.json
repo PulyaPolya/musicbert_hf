@@ -1,0 +1,9 @@
+{
+"input_base_folder":  "dataset_small/rnbert_seqs/data_smaller",
+"output_base_folder": "dataset_small/rnbert_seqs/data_smaller_no_quotations",
+"features":["key", "quality", "events"],
+"concat_features": [],
+"vocabs": {"key": "vocabs/key_no_quotations.txt",  "quality": "vocabs/quality_no_quotations.txt"},
+"vocab_dir": "C:/Users/polin/datasets - Copy/rnbert_abstract_data_raw"
+
+}

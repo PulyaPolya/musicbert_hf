@@ -40,6 +40,7 @@ from omegaconf import OmegaConf
 from transformers import Trainer, TrainingArguments
 import ray
 from ray import tune
+#from ray.tune.integration.huggingface import TuneReportCallback
 from ray.tune.schedulers import ASHAScheduler
 from musicbert_hf.checkpoints import (
     load_musicbert_multitask_token_classifier_from_fairseq_checkpoint,
@@ -149,6 +150,27 @@ def get_config_and_training_kwargs(config_path=None):
     return config, training_kwargs
 
 
+def hp_space(trial):
+    return {
+        "inner_dim": tune.choice([128, 256, 512]),
+        "pooler_dropout": tune.uniform(0.1, 0.5),
+        "num_epochs": tune.choice([3, 5, 10]),
+    }
+
+def trainer_factory(training_args, model):
+    return Trainer(
+        model_init=partial(model_init, model),
+        args=training_args,
+        data_collator=partial(collate_for_musicbert_fn, multitask=config.multitask),
+        train_dataset=train_dataset,
+        eval_dataset=valid_dataset,
+        compute_loss_func=partial(model.compute_loss),
+        compute_metrics=compute_metrics_fn,
+    )
+
+def model_init(model):
+    return model
+
 if __name__ == "__main__":
     config, training_kwargs = get_config_and_training_kwargs(config_path= "scripts/finetune_params.json")
 
@@ -246,16 +268,29 @@ if __name__ == "__main__":
         compute_metrics_fn = compute_metrics
 
     trainer = Trainer(
-        model=model,
+        #model=model,
         args=training_args,
         data_collator=partial(collate_for_musicbert_fn, multitask=config.multitask),
         train_dataset=train_dataset,
         eval_dataset=valid_dataset,
+        model_init=partial(model_init, model),
         compute_loss_func=partial(model.compute_loss),
         compute_metrics=compute_metrics_fn,
     )
 
     trainer.train()
+
+#     trainer.hyperparameter_search(
+#     direction="maximize", 
+#     backend="ray", 
+#     n_trials=2 # number of trials
+# )
+#     best_run = trainer_factory(training_args, model).hyperparameter_search(
+#     direction="maximize",
+#     backend="ray",
+#     n_trials=2,  # Number of trials
+#     hp_space=hp_space,
+# )
 
     # del train_dataset, valid_dataset
 

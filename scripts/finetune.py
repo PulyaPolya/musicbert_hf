@@ -39,6 +39,8 @@ from torchinfo import summary
 from omegaconf import OmegaConf
 from transformers import Trainer, TrainingArguments
 import ray
+import optuna
+import json
 from ray import tune
 #from ray.tune.integration.huggingface import TuneReportCallback
 from ray.tune.schedulers import ASHAScheduler
@@ -157,128 +159,229 @@ def hp_space(trial):
         "num_epochs": tune.choice([3, 5, 10]),
     }
 
-def trainer_factory(training_args, model):
-    return Trainer(
-        model_init=partial(model_init, model),
-        args=training_args,
-        data_collator=partial(collate_for_musicbert_fn, multitask=config.multitask),
-        train_dataset=train_dataset,
-        eval_dataset=valid_dataset,
-        compute_loss_func=partial(model.compute_loss),
-        compute_metrics=compute_metrics_fn,
-    )
 
 def model_init(model):
     return model
 
-if __name__ == "__main__":
-    config, training_kwargs = get_config_and_training_kwargs(config_path= "scripts/finetune_params.json")
 
+def objective(trial):
+    # Load original config from JSON
+    _, training_kwargs = get_config_and_training_kwargs(config_path= "scripts/finetune_params.json")
+
+    with open("scripts/finetune_params.json") as f:
+        config_dict = json.load(f)
+    # Inject trial-suggested hyperparameters
+    config_dict["batch_size"] = trial.suggest_categorical("batch_size", [8, 16, 32])
+    config_dict["learning_rate"] = trial.suggest_float("learning_rate", 1e-5, 5e-4, log=True)
+    config_dict["num_epochs"] = trial.suggest_int("num_epochs", 1, 5)
+
+    # Reload config and training_kwargs
+    #config, training_kwargs = get_config_and_training_kwargs(config_dict=config_data)
+    config = Config(**config_dict)
+    # W&B setup
     if config.wandb_project:
         os.environ["WANDB_PROJECT"] = config.wandb_project
     else:
         os.environ.pop("WANDB_PROJECT", None)
-        # os.environ["WANDB_DISABLED"] = "true"
 
-        # Uncomment to turn on model checkpointing (up to 100Gb)
-        # os.environ["WANDB_LOG_MODEL"] = "checkpoint"
-
+    # Prepare dataset
     train_dataset = get_dataset(config, "train")
     valid_dataset = get_dataset(config, "valid")
 
-    if config.checkpoint_path:
-        if config.multitask:
-            if config.conditioning:
-                model = load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint(   #already here the model has the same structure as rnbert has
-                    config.checkpoint_path,
-                    checkpoint_type="musicbert",
-                    num_labels=train_dataset.vocab_sizes,
-                    z_vocab_size=train_dataset.conditioning_vocab_size,
-                )
-            else:
-                model = (
-                    load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
-                        config.checkpoint_path,
-                        checkpoint_type="musicbert",
-                        num_labels=train_dataset.vocab_sizes,
-                    )
-                )
-            model.config.multitask_label2id = train_dataset.stois
-            model.config.multitask_id2label = {
-                target: {
-                    v: k for k, v in model.config.multitask_label2id[target].items()
-                }
-                for target in train_dataset.stois
-            }
-        else:
-            if config.conditioning:
-                raise NotImplementedError(
-                    "Conditioning is not yet implemented for single-task training"
-                )
-            else:
-                model = load_musicbert_token_classifier_from_fairseq_checkpoint(
-                    config.checkpoint_path,
-                    checkpoint_type="musicbert",
-                    num_labels=train_dataset.vocab_sizes[0],
-                )
-            model.config.label2id = list(train_dataset.stois.values())[0]
-            model.config.id2label = {v: k for k, v in model.config.label2id.items()}
-    else:
+    # Load model
+    if not config.checkpoint_path:
         raise ValueError("checkpoint_path must be provided")
+
+    if config.multitask:
+        if config.conditioning:
+            model = load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint(
+                config.checkpoint_path,
+                checkpoint_type="musicbert",
+                num_labels=train_dataset.vocab_sizes,
+                z_vocab_size=train_dataset.conditioning_vocab_size,
+            )
+        else:
+            model = load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
+                config.checkpoint_path,
+                checkpoint_type="musicbert",
+                num_labels=train_dataset.vocab_sizes,
+            )
+        model.config.multitask_label2id = train_dataset.stois
+        model.config.multitask_id2label = {
+            target: {v: k for k, v in train_dataset.stois[target].items()}
+            for target in train_dataset.stois
+        }
+    else:
+        if config.conditioning:
+            raise NotImplementedError("Conditioning not supported in single-task mode")
+        model = load_musicbert_token_classifier_from_fairseq_checkpoint(
+            config.checkpoint_path,
+            checkpoint_type="musicbert",
+            num_labels=train_dataset.vocab_sizes[0],
+        )
+        model.config.label2id = list(train_dataset.stois.values())[0]
+        model.config.id2label = {v: k for k, v in model.config.label2id.items()}
 
     model.config.targets = list(config.targets)
     if config.conditioning:
         model.config.conditioning = config.conditioning
 
     freeze_layers(model, config.freeze_layers)
-    summary(model)
-    total_layers = sum ( 1 for _ in model.named_modules())
-    print(f"total number of layers {total_layers}")
-    training_kwargs = (
-        dict(
-            output_dir=config.output_dir,
-            num_train_epochs=config.num_epochs,
-            per_device_train_batch_size=config.batch_size,
-            per_device_eval_batch_size=config.batch_size,
-            warmup_steps=config.warmup_steps,
-            logging_dir=config.log_dir,
-            max_steps=config.max_steps,
-            push_to_hub=False,
-            eval_on_start=False,
-            eval_strategy="epoch",   # used to be steps
-            metric_for_best_model="accuracy",
-            greater_is_better=True,
-            save_total_limit=2,
-            #load_best_model_at_end=True,
-        )
-        | training_kwargs
-    )
-    if config.wandb_project:
-        training_kwargs["report_to"] = "wandb"
-    else:
-        training_kwargs["report_to"] = None
 
+    # Update training kwargs with trial-specific parameters
+    training_kwargs =(
+        dict(
+        output_dir= config.output_dir,
+        num_train_epochs= config.num_epochs,
+        per_device_train_batch_size= config.batch_size,
+        per_device_eval_batch_size=config.batch_size,
+        learning_rate= config.learning_rate,
+        warmup_steps= config.warmup_steps,
+        logging_dir= config.log_dir,
+        max_steps= config.max_steps,
+        eval_strategy= "epoch",
+        metric_for_best_model= "accuracy",
+        greater_is_better= True,
+        save_total_limit= 2,
+        push_to_hub= False,
+        eval_on_start= False,
+    )| training_kwargs
+    )
+
+    training_kwargs["report_to"] = "wandb" if config.wandb_project else None
     training_args = TrainingArguments(**training_kwargs)
 
-    if config.multitask:
-        compute_metrics_fn = partial(
-            compute_metrics_multitask, task_names=config.targets
-        )
-    else:
-        compute_metrics_fn = compute_metrics
+    compute_metrics_fn = partial(
+        compute_metrics_multitask, task_names=config.targets
+    ) if config.multitask else compute_metrics
 
     trainer = Trainer(
-        #model=model,
+        model=model,
         args=training_args,
         data_collator=partial(collate_for_musicbert_fn, multitask=config.multitask),
         train_dataset=train_dataset,
         eval_dataset=valid_dataset,
-        model_init=partial(model_init, model),
         compute_loss_func=partial(model.compute_loss),
         compute_metrics=compute_metrics_fn,
     )
 
     trainer.train()
+    eval_result = trainer.evaluate()
+
+    return eval_result["eval_accuracy"]  # or "eval_loss" if you prefer
+
+if __name__ == "__main__":
+    study = optuna.create_study(direction="maximize")
+    study.optimize(objective, n_trials=20)
+
+    print("Best hyperparameters:", study.best_params)
+    # config, training_kwargs = get_config_and_training_kwargs(config_path= "scripts/finetune_params.json")
+
+    # if config.wandb_project:
+    #     os.environ["WANDB_PROJECT"] = config.wandb_project
+    # else:
+    #     os.environ.pop("WANDB_PROJECT", None)
+    #     # os.environ["WANDB_DISABLED"] = "true"
+
+    #     # Uncomment to turn on model checkpointing (up to 100Gb)
+    #     # os.environ["WANDB_LOG_MODEL"] = "checkpoint"
+
+    # train_dataset = get_dataset(config, "train")
+    # valid_dataset = get_dataset(config, "valid")
+
+    # if config.checkpoint_path:
+    #     if config.multitask:
+    #         if config.conditioning:
+    #             model = load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint(   #already here the model has the same structure as rnbert has
+    #                 config.checkpoint_path,
+    #                 checkpoint_type="musicbert",
+    #                 num_labels=train_dataset.vocab_sizes,
+    #                 z_vocab_size=train_dataset.conditioning_vocab_size,
+    #             )
+    #         else:
+    #             model = (
+    #                 load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
+    #                     config.checkpoint_path,
+    #                     checkpoint_type="musicbert",
+    #                     num_labels=train_dataset.vocab_sizes,
+    #                 )
+    #             )
+    #         model.config.multitask_label2id = train_dataset.stois
+    #         model.config.multitask_id2label = {
+    #             target: {
+    #                 v: k for k, v in model.config.multitask_label2id[target].items()
+    #             }
+    #             for target in train_dataset.stois
+    #         }
+    #     else:
+    #         if config.conditioning:
+    #             raise NotImplementedError(
+    #                 "Conditioning is not yet implemented for single-task training"
+    #             )
+    #         else:
+    #             model = load_musicbert_token_classifier_from_fairseq_checkpoint(
+    #                 config.checkpoint_path,
+    #                 checkpoint_type="musicbert",
+    #                 num_labels=train_dataset.vocab_sizes[0],
+    #             )
+    #         model.config.label2id = list(train_dataset.stois.values())[0]
+    #         model.config.id2label = {v: k for k, v in model.config.label2id.items()}
+    # else:
+    #     raise ValueError("checkpoint_path must be provided")
+
+    # model.config.targets = list(config.targets)
+    # if config.conditioning:
+    #     model.config.conditioning = config.conditioning
+
+    # freeze_layers(model, config.freeze_layers)
+    # summary(model)
+    # total_layers = sum ( 1 for _ in model.named_modules())
+    # print(f"total number of layers {total_layers}")
+    # training_kwargs = (
+    #     dict(
+    #         output_dir=config.output_dir,
+    #         num_train_epochs=config.num_epochs,
+    #         per_device_train_batch_size=config.batch_size,
+    #         per_device_eval_batch_size=config.batch_size,
+    #         warmup_steps=config.warmup_steps,
+    #         logging_dir=config.log_dir,
+    #         max_steps=config.max_steps,
+    #         push_to_hub=False,
+    #         eval_on_start=False,
+    #         eval_strategy="epoch",   # used to be steps
+    #         metric_for_best_model="accuracy",
+    #         greater_is_better=True,
+    #         save_total_limit=2,
+    #         #load_best_model_at_end=True,
+    #     )
+    #     | training_kwargs
+    # )
+    # if config.wandb_project:
+    #     training_kwargs["report_to"] = "wandb"
+    # else:
+    #     training_kwargs["report_to"] = None
+
+    # training_args = TrainingArguments(**training_kwargs)
+
+    # if config.multitask:
+    #     compute_metrics_fn = partial(
+    #         compute_metrics_multitask, task_names=config.targets
+    #     )
+    # else:
+    #     compute_metrics_fn = compute_metrics
+
+    # trainer = Trainer(
+    #     model=model,
+    #     args=training_args,
+    #     data_collator=partial(collate_for_musicbert_fn, multitask=config.multitask),
+    #     train_dataset=train_dataset,
+    #     eval_dataset=valid_dataset,
+    #     #model_init=partial(model_init, model),
+    #     compute_loss_func=partial(model.compute_loss),
+    #     compute_metrics=compute_metrics_fn,
+    # )
+
+    # trainer.train()
 
 #     trainer.hyperparameter_search(
 #     direction="maximize", 

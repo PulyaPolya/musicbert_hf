@@ -316,15 +316,21 @@ class RobertaSequenceTaggingHead(nn.Module):
         num_classes,
         activation_fn,
         pooler_dropout,
+        num_hidden_layers=1,
         q_noise=0,
         qn_block_size=8,
         do_spectral_norm=False,
+        num_linear_layers = 1  # linear layers at the end of the model in total
     ):
         super().__init__()
-        self.dense = nn.Linear(input_dim, inner_dim)
         self.activation_fn = from_fairseq.get_activation_fn(activation_fn)
         self.dropout = nn.Dropout(p=pooler_dropout)
-        self.dense_inner = nn.Linear(inner_dim, inner_dim)
+
+        layers = []
+        layers.append(nn.Linear(input_dim, inner_dim))
+        for _ in range(num_linear_layers - 1):
+            layers.append(nn.Linear(inner_dim, inner_dim))
+        self.hidden_layers = nn.ModuleList(layers)
         if q_noise != 0:
             raise NotImplementedError
         self.out_proj = nn.Linear(inner_dim, num_classes)
@@ -341,12 +347,10 @@ class RobertaSequenceTaggingHead(nn.Module):
         # TODO: (Malcolm 2023-09-05)
         # https://github.com/facebookresearch/fairseq/pull/1709/files#r381391530
         # Would it make sense to add layer_norm here just like in the RobertaLMHead?
-        x = self.dropout(x)
-        x = self.dense(x)
-        x = self.activation_fn(x)
-        x = self.dense_inner(x)
-        x = self.activation_fn(x)
-        x = self.dropout(x)
+        x = self.dropout(features)
+        for layer in self.hidden_layers:
+            x = self.activation_fn(layer(x))
+            x = self.dropout(x)
         x = self.out_proj(x)
         return x
 
@@ -383,8 +387,12 @@ class MusicBertTokenClassification(BertPreTrainedModel):
             input_dim=config.hidden_size,
             inner_dim=config.hidden_size,
             num_classes=config.num_labels,
-            activation_fn=config.classifier_activation,
-            pooler_dropout=classifier_dropout,
+            #activation_fn=config.classifier_activation,
+            activation_fn=config.activation_fn,
+            #pooler_dropout=classifier_dropout,
+            pooler_dropout=config.pooler_dropout,
+            num_linear_layers = config.num_linear_layers
+            
         )
 
         # Initialize weights and apply final processing

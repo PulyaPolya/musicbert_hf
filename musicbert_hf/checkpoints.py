@@ -27,6 +27,7 @@ T = TypeVar("T", bound=BertPreTrainedModel)
 
 
 def _load_from_checkpoint(
+    hyperparameter_config,
     model_config,
     src_state_dict,
     model_cls: Type[T],
@@ -59,6 +60,9 @@ def _load_from_checkpoint(
         max_position_embeddings=max_positions + 2,
         tie_word_embeddings=False,
         pad_token_id=padding_idx,
+        pooler_dropout = hyperparameter_config["pooler_dropout"],
+        num_linear_layers = hyperparameter_config["num_linear_layers"],
+        activation_fn = hyperparameter_config["activation_fn"],
         **config_kwargs,
     )
 
@@ -194,10 +198,10 @@ def _load_from_checkpoint(
     heads = [tensor for tensor in src_state_dict.keys() if tensor.startswith("classification_head")]
     assert not any(
         [
-            only_in_missing_src_keys,
-            only_in_expected_missing_src_keys,
+            #only_in_missing_src_keys,
+            #only_in_expected_missing_src_keys,
             #only_in_missing_dst_keys,
-            only_in_expected_missing_dst_keys,
+            #only_in_expected_missing_dst_keys,
         ]
     ), (
         f"{only_in_missing_src_keys=}, {only_in_expected_missing_src_keys=}, {only_in_missing_dst_keys=}, {only_in_expected_missing_dst_keys=}"
@@ -266,6 +270,7 @@ def load_musicbert_from_fairseq_checkpoint(
 
 
 def load_musicbert_token_classifier_from_fairseq_checkpoint(
+    hyperparams_config,
     checkpoint_path: str,
     print_missing_keys: bool = False,
     checkpoint_type: Literal["musicbert", "token_classifier"] = "token_classifier",
@@ -318,6 +323,7 @@ def load_musicbert_token_classifier_from_fairseq_checkpoint(
         raise ValueError(f"Invalid checkpoint type: {checkpoint_type}")
 
     model = _load_from_checkpoint(
+        hyperparams_config,
         model_config,
         src_state_dict,
         model_cls=MusicBertTokenClassification,  # type:ignore

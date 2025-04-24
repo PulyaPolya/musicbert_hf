@@ -38,12 +38,13 @@ from typing import Literal, Sequence
 from torchinfo import summary
 from omegaconf import OmegaConf
 from transformers import Trainer, TrainingArguments
-import ray
 import optuna
 import json
-from ray import tune
+import os
+from transformers import EarlyStoppingCallback
+import wandb
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 #from ray.tune.integration.huggingface import TuneReportCallback
-from ray.tune.schedulers import ASHAScheduler
 from musicbert_hf.checkpoints import (
     load_musicbert_multitask_token_classifier_from_fairseq_checkpoint,
     load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint,
@@ -152,15 +153,6 @@ def get_config_and_training_kwargs(config_path=None):
     config = Config(**config_kwargs)  # type:ignore
     return config, training_kwargs
 
-
-def hp_space(trial):
-    return {
-        "inner_dim": tune.choice([128, 256, 512]),
-        "pooler_dropout": tune.uniform(0.1, 0.5),
-        "num_epochs": tune.choice([3, 5, 10]),
-    }
-
-
 def model_init(model):
     return model
 
@@ -189,7 +181,6 @@ def objective(trial):
     # Prepare dataset
     train_dataset = get_dataset(config, "train")
     valid_dataset = get_dataset(config, "valid")
-
     # Load model
     if not config.checkpoint_path:
         raise ValueError("checkpoint_path must be provided")
@@ -251,18 +242,29 @@ def objective(trial):
         metric_for_best_model= "accuracy",
         greater_is_better= True,
         save_total_limit= 2,
+        report_to = "wandb",
         push_to_hub= False,
         eval_on_start= False,
     )| training_kwargs
     )
 
-    training_kwargs["report_to"] = "wandb" if config.wandb_project else None
+    #training_kwargs["report_to"] = "wandb" if config.wandb_project else None
     training_args = TrainingArguments(**training_kwargs)
 
     compute_metrics_fn = partial(
         compute_metrics_multitask, task_names=config.targets
     ) if config.multitask else compute_metrics
+    print(f"starting with the model training")
+    print(f"max steps {config.max_steps}")
+    wandb.init(project="musicbert", name="first_tray", config={
+            "target": "quality",
 
+            "epochs": config.num_epochs,
+            "batch_size": config.batch_size ,
+            "max_steps": config.max_steps,
+            "lr": config.learning_rate,
+            "augmentation": False,
+            })
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -271,16 +273,18 @@ def objective(trial):
         eval_dataset=valid_dataset,
         compute_loss_func=partial(model.compute_loss),
         compute_metrics=compute_metrics_fn,
+        callbacks = [EarlyStoppingCallback(early_stopping_patience =4)]
     )
 
     trainer.train()
+    print(f"evaluating the model")
     eval_result = trainer.evaluate()
 
-    return eval_result["eval_accuracy"]  # or "eval_loss" if you prefer
+    return eval_result["eval_accuracy"] 
 
 if __name__ == "__main__":
     study = optuna.create_study(direction="maximize")
-    study.optimize(objective, n_trials=4)
+    study.optimize(objective, n_trials=1)
 
     print("Best hyperparameters:", study.best_params)
    

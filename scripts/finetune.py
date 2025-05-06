@@ -42,6 +42,7 @@ import optuna
 import json
 import os
 from transformers import EarlyStoppingCallback
+from torch.utils.data import Subset
 import wandb
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 #from ray.tune.integration.huggingface import TuneReportCallback
@@ -54,6 +55,23 @@ from musicbert_hf.data import HDF5Dataset, collate_for_musicbert_fn
 from musicbert_hf.metrics import compute_metrics, compute_metrics_multitask
 from musicbert_hf.models import freeze_layers
 
+class LimitedDataset:
+    def __init__(self, base_dataset, limit):
+        self.base_dataset = base_dataset
+        self.limit = limit
+
+        # Copy over needed attributes
+        self.vocab_sizes = base_dataset.vocab_sizes
+        self.stois = base_dataset.stois
+        self.conditioning_vocab_size = getattr(base_dataset, "conditioning_vocab_size", None)
+
+    def __getitem__(self, index):
+        if index >= self.limit:
+            raise IndexError("Index out of range for LimitedDataset")
+        return self.base_dataset[index]
+
+    def __len__(self):
+        return min(self.limit, len(self.base_dataset))
 
 @dataclass
 class Config:
@@ -166,9 +184,10 @@ def objective(trial):
     # Inject trial-suggested hyperparameters
     #config_dict["batch_size"] = trial.suggest_categorical("batch_size", [8, 16, 32])
     #config_dict["learning_rate"] = trial.suggest_float("learning_rate", 1e-5, 5e-4, log=True)
-    config_dict["max_steps"] = trial.suggest_int("max_steps", 1, 5)
-    config_dict["activation_function"] = trial.suggest_categorical("activation_fn", ["relu", "tanh"])
-    config_dict["pooler_dropout"] = trial.suggest_int("pooler_dropout", 1, 5)
+    #config_dict["max_steps"] = trial.suggest_int("max_steps", 50, 100)
+    #config_dict["num_epochs"] = trial.suggest_int("num_epochs", 5, 30)
+    config_dict["activation_function"] = trial.suggest_categorical("activation_fn", ["tanh"])
+    config_dict["pooler_dropout"] = trial.suggest_int("pooler_dropout", 0, 1)
     # Reload config and training_kwargs
     #config, training_kwargs = get_config_and_training_kwargs(config_dict=config_data)
     config = Config(**config_dict)
@@ -181,6 +200,8 @@ def objective(trial):
     # Prepare dataset
     train_dataset = get_dataset(config, "train")
     valid_dataset = get_dataset(config, "valid")
+    #train_dataset = LimitedDataset(train_dataset, limit=100)
+    #valid_dataset = LimitedDataset(valid_dataset, limit=100)
     # Load model
     if not config.checkpoint_path:
         raise ValueError("checkpoint_path must be provided")
@@ -195,6 +216,11 @@ def objective(trial):
             )
         else:
             model = load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
+                {
+            "activation_fn": config.activation_function,
+            "pooler_dropout": config.pooler_dropout/10,
+            "num_linear_layers": 3
+        },
                 config.checkpoint_path,
                 checkpoint_type="musicbert",
                 num_labels=train_dataset.vocab_sizes,
@@ -238,7 +264,8 @@ def objective(trial):
         warmup_steps= config.warmup_steps,
         logging_dir= config.log_dir,
         max_steps= config.max_steps,
-        eval_strategy= "epoch",
+        eval_strategy= "steps",
+        eval_steps= 1000,
         metric_for_best_model= "accuracy",
         greater_is_better= True,
         save_total_limit= 2,
@@ -248,23 +275,25 @@ def objective(trial):
     )| training_kwargs
     )
 
-    #training_kwargs["report_to"] = "wandb" if config.wandb_project else None
+    training_kwargs["report_to"] = "wandb" #if config.wandb_project else None
     training_args = TrainingArguments(**training_kwargs)
 
     compute_metrics_fn = partial(
         compute_metrics_multitask, task_names=config.targets
     ) if config.multitask else compute_metrics
     print(f"starting with the model training")
-    print(f"max steps {config.max_steps}")
-    wandb.init(project="musicbert", name="first_tray", config={
+    print(f"max_steps {config.max_steps}")
+    
+    wandb.init(project="musicbert", name=f"gpu_trial_number_{trial.number}", config={
             "target": "quality",
-
-            "epochs": config.num_epochs,
+            "features" : "key",
+            "epochs": 100,
             "batch_size": config.batch_size ,
             "max_steps": config.max_steps,
             "lr": config.learning_rate,
             "augmentation": False,
             })
+            
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -279,10 +308,12 @@ def objective(trial):
     trainer.train()
     print(f"evaluating the model")
     eval_result = trainer.evaluate()
+    wandb.log({"eval_accuracy": eval_result["eval_accuracy"]})
 
     return eval_result["eval_accuracy"] 
 
 if __name__ == "__main__":
+    print("start")
     study = optuna.create_study(direction="maximize")
     study.optimize(objective, n_trials=1)
 

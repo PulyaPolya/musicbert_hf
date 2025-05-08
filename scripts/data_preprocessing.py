@@ -39,7 +39,9 @@ import logging
 import pdb
 import sys
 import traceback
-
+import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from musicbert_hf.script_helpers.data_preprocessing_helpers import (
     Config,
     load_config_from_json,
@@ -81,9 +83,9 @@ def main(config: Config):
         )
         all_itos[concatted_feature] = itos
         all_stoi[concatted_feature] = stoi
-
     for split in ["train", "test", "valid"]:
         logging.info(f"Processing {split} split")
+        #print("going into function")
         to_tokens_h5(
             input_csv_folder=getattr(config, f"{split}_input_folder"),
             output_folder=getattr(config, f"{split}_output_folder"),
@@ -100,5 +102,7 @@ if __name__ == "__main__":
     # args = parser.parse_args()
     # logging.basicConfig(level=logging.INFO)
     # config = load_config_from_json(args.config)
+    #print("starting")
+    print("starting data preprocessing")
     config =  load_config_from_json("data_preprocessing_params.json")
     main(config)

@@ -493,14 +493,14 @@ class RobertaSequenceMultiTaggingHead(nn.Module):
         for n_class in num_classes:
             sub_heads.append(
                 RobertaSequenceTaggingHead(
-                    input_dim,
-                    inner_dim,
-                    n_class,
-                    activation_fn,
-                    pooler_dropout,
-                    q_noise,
-                    qn_block_size,
-                    do_spectral_norm,
+                    input_dim=input_dim,
+                    inner_dim=inner_dim,
+                    num_classes=n_class,
+                    activation_fn=activation_fn,
+                    pooler_dropout=pooler_dropout,
+                    q_noise = q_noise,
+                    qn_block_size = qn_block_size,
+                    do_spectral_norm=do_spectral_norm
                 )
             )
         self.n_heads = len(sub_heads)

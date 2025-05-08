@@ -283,7 +283,7 @@ def objective(trial):
     ) if config.multitask else compute_metrics
     print(f"starting with the model training")
     print(f"max_steps {config.max_steps}")
-    
+    """
     wandb.init(project="musicbert", name=f"gpu_trial_number_{trial.number}", config={
             "target": "quality",
             "features" : "key",
@@ -293,7 +293,7 @@ def objective(trial):
             "lr": config.learning_rate,
             "augmentation": False,
             })
-            
+      """     
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -308,7 +308,7 @@ def objective(trial):
     trainer.train()
     print(f"evaluating the model")
     eval_result = trainer.evaluate()
-    wandb.log({"eval_accuracy": eval_result["eval_accuracy"]})
+    #wandb.log({"eval_accuracy": eval_result["eval_accuracy"]})
 
     return eval_result["eval_accuracy"] 
 

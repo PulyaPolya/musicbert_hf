@@ -1,9 +1,8 @@
 {
-"input_base_folder":  "dataset_small/rnbert_seqs/data_smaller",
-"output_base_folder": "dataset_small/rnbert_seqs/data_smaller_no_quotations",
-"features":["key", "quality", "events"],
+"input_base_folder":  "/home/ui556004/datasets/rnbert_seqs/data",
+"output_base_folder": "/home/ui556004/datasets/rnbert_seqs/data",
+"features":["events", "bass_pcs", "chord_factors", "key", "harmony_onset", "granular_mode",  "key_pc",  "scale_degree", "primary_degree", "tonicization", "mode", "key_pc_mode",  "primary_alteration", "secondary_degree", "granular_key", "key_signature", "spelling", "chord_tone",   "key_signature_mode", "secondary_alteration",   "quality",  "inversion" ],
 "concat_features": [],
-"vocabs": {"key": "vocabs/key_no_quotations.txt",  "quality": "vocabs/quality_no_quotations.txt"},
-"vocab_dir": "C:/Users/polin/datasets - Copy/rnbert_abstract_data_raw"
+"vocab_dir": "/home/ui556004/datasets/rnbert_abstract_data_bin/vocabs"
 
 }

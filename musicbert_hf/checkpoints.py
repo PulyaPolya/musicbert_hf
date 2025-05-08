@@ -345,6 +345,7 @@ def load_musicbert_token_classifier_from_fairseq_checkpoint(
 
 
 def load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
+    hyperparams_config,
     checkpoint_path: str,
     print_missing_keys: bool = False,
     checkpoint_type: Literal["musicbert", "token_classifier"] = "token_classifier",
@@ -417,8 +418,9 @@ def load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
         "encoder.lm_head.layer_norm.bias",
     ]
     model = _load_from_checkpoint(
-        model_config,
-        src_state_dict,
+        hyperparams_config,
+        model_config = model_config,
+        src_state_dict = src_state_dict,
         model_cls=MusicBertMultiTaskTokenClassification,  # type:ignore
         print_missing_keys=print_missing_keys,
         parameter_mapping=parameter_mapping,

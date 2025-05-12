@@ -42,6 +42,7 @@ import optuna
 import json
 import os
 from transformers import EarlyStoppingCallback
+from transformers import AutoModelForTokenClassification
 from torch.utils.data import Subset
 import wandb
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -93,7 +94,7 @@ class Config:
     # If None, freeze all layers; if int, freeze all layers up to and including
     #   the specified layer; if sequence of ints, freeze the specified layers
     freeze_layers: int | Sequence[int] | None = None
-    activation_function: str | None = None
+    activation_fn: str | None = None
     pooler_dropout : int = 0
     # In general, we want to leave job_id as None and set automatically, but for
     #   local testing we can set it manually
@@ -171,10 +172,6 @@ def get_config_and_training_kwargs(config_path=None):
     config = Config(**config_kwargs)  # type:ignore
     return config, training_kwargs
 
-def model_init(model):
-    return model
-
-
 def objective(trial):
     # Load original config from JSON
     _, training_kwargs = get_config_and_training_kwargs(config_path= "scripts/finetune_params.json")
@@ -186,7 +183,7 @@ def objective(trial):
     #config_dict["learning_rate"] = trial.suggest_float("learning_rate", 1e-5, 5e-4, log=True)
     #config_dict["max_steps"] = trial.suggest_int("max_steps", 50, 100)
     #config_dict["num_epochs"] = trial.suggest_int("num_epochs", 5, 30)
-    config_dict["activation_function"] = trial.suggest_categorical("activation_fn", ["tanh"])
+    config_dict["activation_fn"] = trial.suggest_categorical("activation_fn", ["tanh"])
     config_dict["pooler_dropout"] = trial.suggest_int("pooler_dropout", 0, 1)
     # Reload config and training_kwargs
     #config, training_kwargs = get_config_and_training_kwargs(config_dict=config_data)
@@ -200,8 +197,8 @@ def objective(trial):
     # Prepare dataset
     train_dataset = get_dataset(config, "train")
     valid_dataset = get_dataset(config, "valid")
-    #train_dataset = LimitedDataset(train_dataset, limit=100)
-    #valid_dataset = LimitedDataset(valid_dataset, limit=100)
+    train_dataset = LimitedDataset(train_dataset, limit=30)
+    valid_dataset = LimitedDataset(valid_dataset, limit=10)
     # Load model
     if not config.checkpoint_path:
         raise ValueError("checkpoint_path must be provided")
@@ -217,7 +214,7 @@ def objective(trial):
         else:
             model = load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
                 {
-            "activation_fn": config.activation_function,
+            "activation_fn": config.activation_fn,
             "pooler_dropout": config.pooler_dropout/10,
             "num_linear_layers": 3
         },
@@ -235,7 +232,7 @@ def objective(trial):
             raise NotImplementedError("Conditioning not supported in single-task mode")
         model = load_musicbert_token_classifier_from_fairseq_checkpoint(
             {
-            "activation_fn": config.activation_function,
+            "activation_fn": config.activation_fn,
             "pooler_dropout": config.pooler_dropout/10,
             "num_linear_layers": 3
         },
@@ -265,12 +262,16 @@ def objective(trial):
         logging_dir= config.log_dir,
         max_steps= config.max_steps,
         eval_strategy= "steps",
-        eval_steps= 1000,
+        eval_steps= 1,
+        load_best_model_at_end = True,
         metric_for_best_model= "accuracy",
         greater_is_better= True,
-        save_total_limit= 2,
+        save_total_limit= 1,
+        save_steps = 1,
+        save_strategy = "steps",
         report_to = "wandb",
-        push_to_hub= False,
+        push_to_hub= True,
+        hub_model_id = "polinaZaroko/rnnbert",
         eval_on_start= False,
     )| training_kwargs
     )
@@ -283,8 +284,8 @@ def objective(trial):
     ) if config.multitask else compute_metrics
     print(f"starting with the model training")
     print(f"max_steps {config.max_steps}")
-    """
-    wandb.init(project="musicbert", name=f"gpu_trial_number_{trial.number}", config={
+    
+    wandb.init(project="musicbert", name=f"0hf_try_{trial.number}", config={
             "target": "quality",
             "features" : "key",
             "epochs": 100,
@@ -293,7 +294,7 @@ def objective(trial):
             "lr": config.learning_rate,
             "augmentation": False,
             })
-      """     
+          
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -316,6 +317,36 @@ if __name__ == "__main__":
     print("start")
     study = optuna.create_study(direction="maximize")
     study.optimize(objective, n_trials=1)
-
+    best_trial = study.best_trial
     print("Best hyperparameters:", study.best_params)
+    with open("scripts/finetune_params.json") as f:
+        config_dict = json.load(f)
+    config_dict.update(best_trial.params)
+    best_config = Config(**config_dict)
+    model = AutoModelForTokenClassification.from_pretrained("polinaZaroko/rnnbert")
+    test_dataset = get_dataset(best_config, "test")
+    test_args = TrainingArguments(
+    #output_dir=best_model_dir,
+    per_device_eval_batch_size=best_config.batch_size,
+    report_to=None,
+    do_train=False,
+    do_eval=True,
+    )
+    compute_metrics_fn = partial(
+    compute_metrics_multitask, task_names=best_config.targets
+    ) if best_config.multitask else compute_metrics
+
+    test_trainer = Trainer(
+        model=model,
+        args=test_args,
+        data_collator=partial(collate_for_musicbert_fn, multitask=best_config.multitask),
+        eval_dataset=test_dataset,
+        compute_metrics=compute_metrics_fn,
+    )
+
+    print("Evaluating best model on test set...")
+    test_results = test_trainer.evaluate()
+    for k, v in test_results.items():
+        print(f"{k}: {v:.4f}")
+    
    

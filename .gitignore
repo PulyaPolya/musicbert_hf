@@ -12,3 +12,4 @@ private_scripts.sh/
 rnbert_checkpoints
 bert_hf
 trying.ipynb
+scripts/finetune_params.json

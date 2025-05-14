@@ -42,10 +42,11 @@ import optuna
 import json
 import os
 from transformers import EarlyStoppingCallback
-from transformers import AutoModelForTokenClassification
+#from transformers import AutoModelForTokenClassification
 from torch.utils.data import Subset
 import wandb
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 #from ray.tune.integration.huggingface import TuneReportCallback
 from musicbert_hf.checkpoints import (
     load_musicbert_multitask_token_classifier_from_fairseq_checkpoint,
@@ -54,7 +55,7 @@ from musicbert_hf.checkpoints import (
 )
 from musicbert_hf.data import HDF5Dataset, collate_for_musicbert_fn
 from musicbert_hf.metrics import compute_metrics, compute_metrics_multitask
-from musicbert_hf.models import freeze_layers
+from musicbert_hf.models import freeze_layers, MusicBertTokenClassification, MusicBertMultiTaskTokenClassification
 
 class LimitedDataset:
     def __init__(self, base_dataset, limit):
@@ -99,6 +100,8 @@ class Config:
     # In general, we want to leave job_id as None and set automatically, but for
     #   local testing we can set it manually
     job_id: str | None = None
+    hf_repository: str | None = None
+    hf_token: str | None = None
 
     def __post_init__(self):
         assert self.num_epochs is not None or self.max_steps is not None, (
@@ -175,6 +178,7 @@ def get_config_and_training_kwargs(config_path=None):
 def objective(trial):
     # Load original config from JSON
     _, training_kwargs = get_config_and_training_kwargs(config_path= "scripts/finetune_params.json")
+  
 
     with open("scripts/finetune_params.json") as f:
         config_dict = json.load(f)
@@ -188,6 +192,7 @@ def objective(trial):
     # Reload config and training_kwargs
     #config, training_kwargs = get_config_and_training_kwargs(config_dict=config_data)
     config = Config(**config_dict)
+    os.environ["HF_TOKEN"] = config.hf_token
     # W&B setup
     if config.wandb_project:
         os.environ["WANDB_PROJECT"] = config.wandb_project
@@ -271,7 +276,7 @@ def objective(trial):
         save_strategy = "steps",
         report_to = "wandb",
         push_to_hub= True,
-        hub_model_id = "polinaZaroko/rnnbert",
+        hub_model_id = config.hf_repository,
         eval_on_start= False,
     )| training_kwargs
     )
@@ -284,7 +289,7 @@ def objective(trial):
     ) if config.multitask else compute_metrics
     print(f"starting with the model training")
     print(f"max_steps {config.max_steps}")
-    
+    """
     wandb.init(project="musicbert", name=f"0hf_try_{trial.number}", config={
             "target": "quality",
             "features" : "key",
@@ -294,7 +299,7 @@ def objective(trial):
             "lr": config.learning_rate,
             "augmentation": False,
             })
-          
+       """   
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -314,17 +319,35 @@ def objective(trial):
     return eval_result["eval_accuracy"] 
 
 if __name__ == "__main__":
+    """
     print("start")
     study = optuna.create_study(direction="maximize")
     study.optimize(objective, n_trials=1)
     best_trial = study.best_trial
     print("Best hyperparameters:", study.best_params)
+    """
+    print("evaluating the model from hf")
     with open("scripts/finetune_params.json") as f:
         config_dict = json.load(f)
-    config_dict.update(best_trial.params)
+    best_trial = {'activation_fn': 'tanh', 'pooler_dropout': 0}
+    
+    config_dict.update(best_trial) # best_trial.params
     best_config = Config(**config_dict)
-    model = AutoModelForTokenClassification.from_pretrained("polinaZaroko/rnnbert")
-    test_dataset = get_dataset(best_config, "test")
+    os.environ["HF_TOKEN"] = best_config.hf_token
+    train_dataset = get_dataset(best_config, "train")
+    train_dataset = LimitedDataset(train_dataset, limit=30)
+    test_dataset = get_dataset(best_config, "valid")
+    test_dataset = LimitedDataset(test_dataset, limit=10)
+    model = MusicBertMultiTaskTokenClassification.from_pretrained("polinaZaroko/rnnbert")
+    
+
+    model.config.multitask_label2id = train_dataset.stois
+    model.config.multitask_id2label = {
+        target: {v: k for k, v in train_dataset.stois[target].items()}
+        for target in train_dataset.stois
+    }
+    model.config.targets = list(best_config.targets)
+    
     test_args = TrainingArguments(
     #output_dir=best_model_dir,
     per_device_eval_batch_size=best_config.batch_size,
@@ -332,6 +355,7 @@ if __name__ == "__main__":
     do_train=False,
     do_eval=True,
     )
+    
     compute_metrics_fn = partial(
     compute_metrics_multitask, task_names=best_config.targets
     ) if best_config.multitask else compute_metrics

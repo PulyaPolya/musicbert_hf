@@ -403,7 +403,6 @@ class MusicBertTokenClassification(BertPreTrainedModel):
         if isinstance(logits, dict):
             # HuggingFace uses `TokenClassifierOutput` which is a dict subtype
             logits = logits["logits"]
-
         loss = F.cross_entropy(
             logits.view(-1, logits.shape[-1]), labels.view(-1), reduction="mean"
         )

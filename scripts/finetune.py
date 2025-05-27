@@ -192,7 +192,7 @@ def objective(trial):
     # Reload config and training_kwargs
     #config, training_kwargs = get_config_and_training_kwargs(config_dict=config_data)
     config = Config(**config_dict)
-    os.environ["HF_TOKEN"] = config.hf_token
+    #os.environ["HF_TOKEN"] = config.hf_token
     # W&B setup
     if config.wandb_project:
         os.environ["WANDB_PROJECT"] = config.wandb_project
@@ -267,15 +267,15 @@ def objective(trial):
         logging_dir= config.log_dir,
         max_steps= config.max_steps,
         eval_strategy= "steps",
-        eval_steps= 1,
+        eval_steps= 10,
         load_best_model_at_end = True,
         metric_for_best_model= "accuracy",
         greater_is_better= True,
         save_total_limit= 1,
-        save_steps = 1,
+        #save_steps = 1000,
         save_strategy = "steps",
         report_to = "wandb",
-        push_to_hub= True,
+        #push_to_hub= True,
         hub_model_id = config.hf_repository,
         eval_on_start= False,
     )| training_kwargs
@@ -289,8 +289,8 @@ def objective(trial):
     ) if config.multitask else compute_metrics
     print(f"starting with the model training")
     print(f"max_steps {config.max_steps}")
-    """
-    wandb.init(project="musicbert", name=f"0hf_try_{trial.number}", config={
+    #"""
+    wandb.init(project="musicbert", name=f"0hf_wo_onsets_{trial.number}", config={
             "target": "quality",
             "features" : "key",
             "epochs": 100,
@@ -299,7 +299,7 @@ def objective(trial):
             "lr": config.learning_rate,
             "augmentation": False,
             })
-       """   
+      # """   
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -319,26 +319,26 @@ def objective(trial):
     return eval_result["eval_accuracy"] 
 
 if __name__ == "__main__":
-    """
+    
     print("start")
     study = optuna.create_study(direction="maximize")
-    study.optimize(objective, n_trials=1)
+    study.optimize(objective, n_trials=2)
     best_trial = study.best_trial
     print("Best hyperparameters:", study.best_params)
-    """
+    
     print("evaluating the model from hf")
     with open("scripts/finetune_params.json") as f:
         config_dict = json.load(f)
-    best_trial = {'activation_fn': 'tanh', 'pooler_dropout': 0}
+    #best_trial = {'activation_fn': 'tanh', 'pooler_dropout': 0}
     
-    config_dict.update(best_trial) # best_trial.params
+    config_dict.update(best_trial.params) # best_trial.params
     best_config = Config(**config_dict)
-    os.environ["HF_TOKEN"] = best_config.hf_token
+    #os.environ["HF_TOKEN"] = best_config.hf_token
     train_dataset = get_dataset(best_config, "train")
-    train_dataset = LimitedDataset(train_dataset, limit=30)
-    test_dataset = get_dataset(best_config, "valid")
-    test_dataset = LimitedDataset(test_dataset, limit=10)
-    model = MusicBertMultiTaskTokenClassification.from_pretrained("polinaZaroko/rnnbert")
+    #train_dataset = LimitedDataset(train_dataset, limit=30)
+    test_dataset = get_dataset(best_config, "test")     # don't forget to change back to test
+    #tsest_dataset = LimitedDataset(test_dataset, limit=10)
+    model = MusicBertMultiTaskTokenClassification.from_pretrained(best_config.hf_repository)
     
 
     model.config.multitask_label2id = train_dataset.stois
@@ -359,7 +359,7 @@ if __name__ == "__main__":
     compute_metrics_fn = partial(
     compute_metrics_multitask, task_names=best_config.targets
     ) if best_config.multitask else compute_metrics
-
+    del train_dataset
     test_trainer = Trainer(
         model=model,
         args=test_args,

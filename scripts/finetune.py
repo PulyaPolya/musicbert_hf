@@ -291,7 +291,7 @@ def objective(trial):
     print(f"starting with the model training")
     print(f"max_steps {config.max_steps}")
     #"""
-    wandb.init(project="musicbert", name=f"0hf_l_{trial.number}", config={
+    wandb.init(project="musicbert", name=f"0hf_after_merge_{trial.number}", config={
             "target": "quality",
             "features" : "key",
             "epochs": 100,

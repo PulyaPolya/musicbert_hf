@@ -483,6 +483,7 @@ class RobertaSequenceMultiTaggingHead(nn.Module):
         num_classes: Sequence[int],
         activation_fn,
         pooler_dropout,
+        num_linear_layers = 1,
         q_noise=0,
         qn_block_size=8,
         do_spectral_norm=False,
@@ -499,7 +500,8 @@ class RobertaSequenceMultiTaggingHead(nn.Module):
                     pooler_dropout=pooler_dropout,
                     q_noise = q_noise,
                     qn_block_size = qn_block_size,
-                    do_spectral_norm=do_spectral_norm
+                    do_spectral_norm=do_spectral_norm,
+                    num_linear_layers=num_linear_layers
                 )
             )
         self.n_heads = len(sub_heads)
@@ -593,6 +595,7 @@ class MusicBertMultiTaskTokenClassification(BertPreTrainedModel):
             num_classes=config.num_multi_labels,
             activation_fn=config.classifier_activation,
             pooler_dropout=classifier_dropout,
+            num_linear_layers = config.num_linear_layers
         )
 
         # Initialize weights and apply final processing

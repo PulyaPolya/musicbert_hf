@@ -93,6 +93,7 @@ class Config:
     # If None, freeze all layers; if int, freeze all layers up to and including
     #   the specified layer; if sequence of ints, freeze the specified layers
     freeze_layers: int | Sequence[int] | None = None
+    num_linear_layers : int = 1
     activation_fn: str | None = None
     pooler_dropout : int = 0
     # In general, we want to leave job_id as None and set automatically, but for
@@ -190,6 +191,7 @@ def objective(trial):
     #config_dict["num_epochs"] = trial.suggest_int("num_epochs", 5, 30)
     config_dict["activation_fn"] = trial.suggest_categorical("activation_fn", ["tanh"])
     config_dict["pooler_dropout"] = trial.suggest_int("pooler_dropout", 0, 1)
+    config_dict["num_linear_layers"] = trial.suggest_int("num_linear_layers", 2, 8)
     # Reload config and training_kwargs
     #config, training_kwargs = get_config_and_training_kwargs(config_dict=config_data)
     config = Config(**config_dict)
@@ -222,7 +224,7 @@ def objective(trial):
                 {
             "activation_fn": config.activation_fn,
             "pooler_dropout": config.pooler_dropout/10,
-            "num_linear_layers": 3
+            "num_linear_layers": config.num_linear_layers
         },
                 config.checkpoint_path,
                 checkpoint_type="musicbert",
@@ -240,7 +242,7 @@ def objective(trial):
             {
             "activation_fn": config.activation_fn,
             "pooler_dropout": config.pooler_dropout/10,
-            "num_linear_layers": 3
+            "num_linear_layers": config.num_linear_layers
         },
             config.checkpoint_path,
             checkpoint_type="musicbert",
@@ -290,7 +292,7 @@ def objective(trial):
     ) if config.multitask else compute_metrics
     print(f"starting with the model training")
     print(f"max_steps {config.max_steps}")
-    #"""
+    """
     wandb.init(project="musicbert", name=f"0with_eval_{trial.number}", config={
             "target": "quality",
             "features" : "key",
@@ -300,7 +302,7 @@ def objective(trial):
             "lr": config.learning_rate,
             "augmentation": False,
             })
-      #"""     
+      """     
     trainer = Trainer(
         model=model,
         args=training_args,

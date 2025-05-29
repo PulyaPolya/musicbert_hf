@@ -93,9 +93,9 @@ class Config:
     # If None, freeze all layers; if int, freeze all layers up to and including
     #   the specified layer; if sequence of ints, freeze the specified layers
     freeze_layers: int | Sequence[int] | None = None
-    num_linear_layers : int = 1
-    activation_fn: str | None = None
-    pooler_dropout : int = 0
+    #num_linear_layers : int = 1
+    #activation_fn: str | None = None
+    #pooler_dropout : int = 0
     # In general, we want to leave job_id as None and set automatically, but for
     #   local testing we can set it manually
     job_id: str | None = None
@@ -184,16 +184,6 @@ def objective(trial):
 
     with open("scripts/finetune_params.json") as f:
         config_dict = json.load(f)
-    # Inject trial-suggested hyperparameters
-    #config_dict["batch_size"] = trial.suggest_categorical("batch_size", [8, 16, 32])
-    #config_dict["learning_rate"] = trial.suggest_float("learning_rate", 1e-5, 5e-4, log=True)
-    #config_dict["max_steps"] = trial.suggest_int("max_steps", 50, 100)
-    #config_dict["num_epochs"] = trial.suggest_int("num_epochs", 5, 30)
-    config_dict["activation_fn"] = trial.suggest_categorical("activation_fn", ["tanh"])
-    config_dict["pooler_dropout"] = trial.suggest_int("pooler_dropout", 0, 1)
-    config_dict["num_linear_layers"] = trial.suggest_int("num_linear_layers", 2, 8)
-    # Reload config and training_kwargs
-    #config, training_kwargs = get_config_and_training_kwargs(config_dict=config_data)
     config = Config(**config_dict)
     os.environ["HF_TOKEN"] = config.hf_token
     # W&B setup
@@ -201,6 +191,19 @@ def objective(trial):
         os.environ["WANDB_PROJECT"] = config.wandb_project
     else:
         os.environ.pop("WANDB_PROJECT", None)
+    hyperparams_dict = {}
+    parameters = {"activation_fn": ["tanh"], "pooler_dropout": [0,1], "num_linear_layers": [2, 8]}
+    for target in (config.targets):
+        target_params = {}
+        for param in parameters.keys():
+            if isinstance(parameters[param][0], str):
+                target_params[param] = trial.suggest_categorical(param + "_" + target, parameters[param])
+            else:
+                target_params[param] = trial.suggest_int(param + "_" + target, parameters[param][0], parameters[param][1])
+        hyperparams_dict[target] = target_params
+    # Reload config and training_kwargs
+    #config, training_kwargs = get_config_and_training_kwargs(config_dict=config_data)
+    
 
     # Prepare dataset
     train_dataset = get_dataset(config, "train")
@@ -221,11 +224,7 @@ def objective(trial):
             )
         else:
             model = load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
-                {
-            "activation_fn": config.activation_fn,
-            "pooler_dropout": config.pooler_dropout/10,
-            "num_linear_layers": config.num_linear_layers
-        },
+                hyperparams_dict,
                 config.checkpoint_path,
                 checkpoint_type="musicbert",
                 num_labels=train_dataset.vocab_sizes,
@@ -239,11 +238,7 @@ def objective(trial):
         if config.conditioning:
             raise NotImplementedError("Conditioning not supported in single-task mode")
         model = load_musicbert_token_classifier_from_fairseq_checkpoint(
-            {
-            "activation_fn": config.activation_fn,
-            "pooler_dropout": config.pooler_dropout/10,
-            "num_linear_layers": config.num_linear_layers
-        },
+            hyperparams_dict,
             config.checkpoint_path,
             checkpoint_type="musicbert",
             num_labels=train_dataset.vocab_sizes[0],

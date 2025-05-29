@@ -593,8 +593,8 @@ class MusicBertMultiTaskTokenClassification(BertPreTrainedModel):
             input_dim=config.hidden_size,
             inner_dim=config.hidden_size,
             num_classes=config.num_multi_labels,
-            activation_fn=config.classifier_activation,
-            pooler_dropout=classifier_dropout,
+            activation_fn=config.activation_fn,
+            pooler_dropout=config.pooler_dropout,
             num_linear_layers = config.num_linear_layers
         )
 

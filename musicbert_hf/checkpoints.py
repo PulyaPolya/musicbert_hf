@@ -48,7 +48,7 @@ def _load_from_checkpoint(
     assert padding_idx == 1
 
     vocab_size = 1237  # Not sure if there is a way to retrieve this from ckpt_state_dict, can't find it
-
+    config_with_hyperparams = {**hyperparameter_config, **config_kwargs}
     bert_config = config_cls(
         num_hidden_layers=n_layers,
         hidden_size=d_model,
@@ -60,10 +60,10 @@ def _load_from_checkpoint(
         max_position_embeddings=max_positions + 2,
         tie_word_embeddings=False,
         pad_token_id=padding_idx,
-        pooler_dropout = hyperparameter_config["pooler_dropout"],
-        num_linear_layers = hyperparameter_config["num_linear_layers"],
-        activation_fn = hyperparameter_config["activation_fn"],
-        **config_kwargs,
+        #pooler_dropout = hyperparameter_config["pooler_dropout"],
+        #num_linear_layers = hyperparameter_config["num_linear_layers"],
+        #activation_fn = hyperparameter_config["activation_fn"],
+        **config_with_hyperparams
     )
 
     model = model_cls(bert_config)

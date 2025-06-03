@@ -323,13 +323,23 @@ class RobertaSequenceTaggingHead(nn.Module):
         num_linear_layers = 1  # linear layers at the end of the model in total
     ):
         super().__init__()
-        self.activation_fn = from_fairseq.get_activation_fn(activation_fn)
+        #self.activation_fn = from_fairseq.get_activation_fn(activation_fn)
+        self.activation_fn =  nn.Tanh()
         self.dropout = nn.Dropout(p=pooler_dropout)
 
         layers = []
-        layers.append(nn.Linear(input_dim, inner_dim))
+        layers.append(nn.Sequential(
+            nn.Linear(input_dim, inner_dim),
+            nn.Dropout(p=pooler_dropout),
+            self.activation_fn,
+        ))
         for _ in range(num_linear_layers - 1):
-            layers.append(nn.Linear(inner_dim, inner_dim))
+            #layers.append(nn.Linear(inner_dim, inner_dim))
+             layers.append(nn.Sequential(
+                nn.Linear(inner_dim, inner_dim),
+                nn.Dropout(p=pooler_dropout),
+                self.activation_fn,
+            ))
         self.hidden_layers = nn.ModuleList(layers)
         if q_noise != 0:
             raise NotImplementedError
@@ -347,10 +357,17 @@ class RobertaSequenceTaggingHead(nn.Module):
         # TODO: (Malcolm 2023-09-05)
         # https://github.com/facebookresearch/fairseq/pull/1709/files#r381391530
         # Would it make sense to add layer_norm here just like in the RobertaLMHead?
+        """
         x = self.dropout(features)
         for layer in self.hidden_layers:
             x = self.activation_fn(layer(x))
             x = self.dropout(x)
+        x = self.out_proj(x)
+        return x
+        """
+        #x = features
+        for layer in self.hidden_layers:
+            x = layer(x)
         x = self.out_proj(x)
         return x
 
@@ -494,11 +511,9 @@ class RobertaSequenceMultiTaggingHead(nn.Module):
         self.config = config
         self.param_dict = config.hyperparams
         for n_class in num_classes:
-            # TODO make sure that the order in num classes corresponds to the order in hyperparameters 
             target = list(self.param_dict.keys())[0]
             target_params = self.param_dict[target]
-            sub_heads.append(
-                RobertaSequenceTaggingHead(
+            head = RobertaSequenceTaggingHead(
                     input_dim=input_dim,
                     inner_dim=inner_dim,
                     num_classes=n_class,
@@ -509,7 +524,11 @@ class RobertaSequenceMultiTaggingHead(nn.Module):
                     do_spectral_norm=do_spectral_norm,
                     num_linear_layers=target_params["num_linear_layers"]
                 )
+            sub_heads.append(
+                head
             )
+            print(f"Head for {target}")
+            print(head)
         self.n_heads = len(sub_heads)
         self.multi_tag_sub_heads = nn.ModuleList(sub_heads)
 
@@ -600,9 +619,6 @@ class MusicBertMultiTaskTokenClassification(BertPreTrainedModel):
             input_dim=config.hidden_size,
             inner_dim=config.hidden_size,
             num_classes=config.num_multi_labels,
-            #activation_fn=config.activation_fn,
-            #pooler_dropout=config.pooler_dropout,
-            #num_linear_layers = config.num_linear_layers,
             config = config
 
         )

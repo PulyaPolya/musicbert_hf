@@ -41,11 +41,12 @@ from transformers import Trainer, TrainingArguments
 import optuna
 import json
 import os
+import pandas as pd
 from transformers import EarlyStoppingCallback
 from torch.utils.data import Subset
 import wandb
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-#from ray.tune.integration.huggingface import TuneReportCallback
+
 from musicbert_hf.checkpoints import (
     load_musicbert_multitask_token_classifier_from_fairseq_checkpoint,
     load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint,
@@ -203,8 +204,11 @@ def objective(trial):
         hyperparams_dict[target] = target_params
     # Reload config and training_kwargs
     #config, training_kwargs = get_config_and_training_kwargs(config_dict=config_data)
-    
-
+    long_degree = "primary_alteration_primary_degree_secondary_alteration_secondary_degree"
+    hyperparams_df = pd.DataFrame.from_dict(hyperparams_dict).T
+    hyperparams_df.rename(index = {long_degree: "degree"}, inplace=True)
+    print("Chosen hyperparameters")
+    print(hyperparams_df)
     # Prepare dataset
     train_dataset = get_dataset(config, "train")
     valid_dataset = get_dataset(config, "valid")

@@ -48,7 +48,8 @@ def _load_from_checkpoint(
     assert padding_idx == 1
 
     vocab_size = 1237  # Not sure if there is a way to retrieve this from ckpt_state_dict, can't find it
-    config_with_hyperparams = {**hyperparameter_config, **config_kwargs}
+    config_with_hyperparams = {**config_kwargs}
+    config_with_hyperparams["hyperparams"] = hyperparameter_config
     bert_config = config_cls(
         num_hidden_layers=n_layers,
         hidden_size=d_model,

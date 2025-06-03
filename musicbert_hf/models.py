@@ -481,27 +481,33 @@ class RobertaSequenceMultiTaggingHead(nn.Module):
         input_dim,
         inner_dim,
         num_classes: Sequence[int],
-        activation_fn,
-        pooler_dropout,
-        num_linear_layers = 1,
+        #activation_fn,
+        #pooler_dropout,
+        #num_linear_layers = 1,
         q_noise=0,
         qn_block_size=8,
         do_spectral_norm=False,
+        config = None
     ):
         super().__init__()
         sub_heads = []
+        self.config = config
+        self.param_dict = config.hyperparams
         for n_class in num_classes:
+            # TODO make sure that the order in num classes corresponds to the order in hyperparameters 
+            target = list(self.param_dict.keys())[0]
+            target_params = self.param_dict[target]
             sub_heads.append(
                 RobertaSequenceTaggingHead(
                     input_dim=input_dim,
                     inner_dim=inner_dim,
                     num_classes=n_class,
-                    activation_fn=activation_fn,
-                    pooler_dropout=pooler_dropout,
+                    activation_fn=target_params["activation_fn"] ,
+                    pooler_dropout=target_params["pooler_dropout"],
                     q_noise = q_noise,
                     qn_block_size = qn_block_size,
                     do_spectral_norm=do_spectral_norm,
-                    num_linear_layers=num_linear_layers
+                    num_linear_layers=target_params["num_linear_layers"]
                 )
             )
         self.n_heads = len(sub_heads)
@@ -567,6 +573,7 @@ class MusicBertMultiTaskTokenClassification(BertPreTrainedModel):
 
         self.num_labels = config.num_multi_labels
         self.num_tasks = len(self.num_labels)
+    
         if config.is_decoder:
             logger.warning(
                 "If you want to use `MusicBert` make sure `config.is_decoder=False` for "
@@ -593,9 +600,11 @@ class MusicBertMultiTaskTokenClassification(BertPreTrainedModel):
             input_dim=config.hidden_size,
             inner_dim=config.hidden_size,
             num_classes=config.num_multi_labels,
-            activation_fn=config.activation_fn,
-            pooler_dropout=config.pooler_dropout,
-            num_linear_layers = config.num_linear_layers
+            #activation_fn=config.activation_fn,
+            #pooler_dropout=config.pooler_dropout,
+            #num_linear_layers = config.num_linear_layers,
+            config = config
+
         )
 
         # Initialize weights and apply final processing

@@ -324,21 +324,27 @@ class RobertaSequenceTaggingHead(nn.Module):
     ):
         super().__init__()
         #self.activation_fn = from_fairseq.get_activation_fn(activation_fn)
-        self.activation_fn =  nn.Tanh()
-        self.dropout = nn.Dropout(p=pooler_dropout)
+        #self.activation_fn =  nn.Tanh()
+        self.activation_function_mapping = dict(
+            tanh = nn.Tanh(),
+            relu = nn.ReLU()
+        )
+        #self.dropout = nn.Dropout(p=pooler_dropout)
 
         layers = []
         layers.append(nn.Sequential(
             nn.Linear(input_dim, inner_dim),
-            nn.Dropout(p=pooler_dropout),
-            self.activation_fn,
+            nn.Dropout(p=pooler_dropout[0] /10),
+            self.activation_function_mapping[activation_fn[0]]
+            #self.activation_fn,
         ))
-        for _ in range(num_linear_layers - 1):
+        for i in range(num_linear_layers - 1):
             #layers.append(nn.Linear(inner_dim, inner_dim))
              layers.append(nn.Sequential(
                 nn.Linear(inner_dim, inner_dim),
-                nn.Dropout(p=pooler_dropout),
-                self.activation_fn,
+                nn.Dropout(p=pooler_dropout[i+1] /10),
+                self.activation_function_mapping[activation_fn[i+1]]
+                #self.activation_fn,
             ))
         self.hidden_layers = nn.ModuleList(layers)
         if q_noise != 0:
@@ -511,7 +517,7 @@ class RobertaSequenceMultiTaggingHead(nn.Module):
         self.config = config
         self.param_dict = config.hyperparams
         for n_class in num_classes:
-            target = list(self.param_dict.keys())[0]
+            target = list(self.param_dict.keys())[num_classes.index(n_class)]
             target_params = self.param_dict[target]
             head = RobertaSequenceTaggingHead(
                     input_dim=input_dim,

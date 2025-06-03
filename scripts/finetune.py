@@ -193,12 +193,18 @@ def objective(trial):
     else:
         os.environ.pop("WANDB_PROJECT", None)
     hyperparams_dict = {}
-    parameters = {"activation_fn": ["tanh"], "pooler_dropout": [0,1], "num_linear_layers": [2, 8]}
+    parameters = {"num_linear_layers": [2, 6], "activation_fn": ["tanh", "relu"], "pooler_dropout": [0,5] }
     for target in (config.targets):
         target_params = {}
         for param in parameters.keys():
-            if isinstance(parameters[param][0], str):
-                target_params[param] = trial.suggest_categorical(param + "_" + target, parameters[param])
+            if param == "pooler_dropout":
+                target_params[param]= []
+                for i in  range(target_params["num_linear_layers"]):
+                    target_params[param].append(trial.suggest_int(param + "_" + target + "_" +str(i), parameters[param][0], parameters[param][1]))   # don't forget to divide by 10 later
+            elif param == "activation_fn":
+                target_params[param]= []
+                for i in  range(target_params["num_linear_layers"]):
+                    target_params[param].append( trial.suggest_categorical(param + "_" + target + "_" +str(i), parameters[param]))
             else:
                 target_params[param] = trial.suggest_int(param + "_" + target, parameters[param][0], parameters[param][1])
         hyperparams_dict[target] = target_params
@@ -292,15 +298,7 @@ def objective(trial):
     print(f"starting with the model training")
     print(f"max_steps {config.max_steps}")
     """
-    wandb.init(project="musicbert", name=f"0with_eval_{trial.number}", config={
-            "target": "quality",
-            "features" : "key",
-            "epochs": 100,
-            "batch_size": config.batch_size ,
-            "max_steps": config.max_steps,
-            "lr": config.learning_rate,
-            "augmentation": False,
-            })
+    wandb.init(project="musicbert", name=f"0with_eval_{trial.number}", config=hyperparams_dict)
       """     
     trainer = Trainer(
         model=model,

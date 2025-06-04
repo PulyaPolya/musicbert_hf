@@ -192,8 +192,15 @@ def objective(trial):
         os.environ["WANDB_PROJECT"] = config.wandb_project
     else:
         os.environ.pop("WANDB_PROJECT", None)
+    
+    # Prepare dataset
+    train_dataset = get_dataset(config, "train")
+    valid_dataset = get_dataset(config, "valid")
+    train_dataset = LimitedDataset(train_dataset, limit=30)
+    valid_dataset = LimitedDataset(valid_dataset, limit=20)
     hyperparams_dict = {}
-    parameters = {"num_linear_layers": [2, 6], "activation_fn": ["tanh", "relu"], "pooler_dropout": [0,5], "normalisation" :  ["batch", "layer", "no"] }
+    parameters = {"num_linear_layers": [2, 6], "activation_fn": ["tanh", "relu"],
+                  "pooler_dropout": [0,5], "normalisation" :  ["none", "layer"] }
     for target in (config.targets):
         target_params = {}
         # First choose num_linear_layers to use in later loops
@@ -203,6 +210,12 @@ def objective(trial):
             parameters["num_linear_layers"][1],
         )
         num_layers = target_params["num_linear_layers"]
+        max_dim = max(768, train_dataset.vocab_sizes[config.targets.index(target)] )
+        min_dim = min (32, train_dataset.vocab_sizes[config.targets.index(target)])
+        target_params["linear_layers_dim"]  = sorted([
+            trial.suggest_int(f"layer_dim_{target}_{i}", min_dim, max_dim)
+            for i in range(num_layers)
+        ], reverse= True)
         # Activation function per layer
         target_params["activation_fn"] = [
             trial.suggest_categorical(f"activation_fn_{target}_{i}", parameters["activation_fn"])
@@ -225,11 +238,6 @@ def objective(trial):
     hyperparams_df.rename(index = {long_degree: "degree"}, inplace=True)
     print("Chosen hyperparameters")
     print(hyperparams_df)
-    # Prepare dataset
-    train_dataset = get_dataset(config, "train")
-    valid_dataset = get_dataset(config, "valid")
-    #train_dataset = LimitedDataset(train_dataset, limit=30)
-    #valid_dataset = LimitedDataset(valid_dataset, limit=20)
     # Load model
     if not config.checkpoint_path:
         raise ValueError("checkpoint_path must be provided")
@@ -285,8 +293,8 @@ def objective(trial):
         logging_dir= config.log_dir,
         max_steps= config.max_steps,
         eval_strategy= "steps",
-        eval_steps= 1000,
-        save_steps = 1000,
+        eval_steps= 5,
+        save_steps = 5,
         load_best_model_at_end = True,
         metric_for_best_model= "accuracy",
         greater_is_better= True,
@@ -307,9 +315,9 @@ def objective(trial):
     ) if config.multitask else compute_metrics
     print(f"starting with the model training")
     print(f"max_steps {config.max_steps}")
-    #"""
+    """
     wandb.init(project="musicbert", name=f"0more_optuna_{trial.number}", config=hyperparams_dict)
-      #"""     
+      """     
     trainer = Trainer(
         model=model,
         args=training_args,

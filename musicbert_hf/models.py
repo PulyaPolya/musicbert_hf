@@ -317,6 +317,7 @@ class RobertaSequenceTaggingHead(nn.Module):
         activation_fns,
         pooler_dropout,
         normalisation,
+        linear_layers_dim,
         num_hidden_layers=1,
         q_noise=0,
         qn_block_size=8,
@@ -335,32 +336,34 @@ class RobertaSequenceTaggingHead(nn.Module):
 
         layers = []
         layers.append(nn.Sequential(
-            nn.Linear(input_dim, inner_dim),
+            nn.Linear(input_dim, linear_layers_dim[0]),
             nn.Dropout(p=pooler_dropout[0] /10),
             self.activation_function_mapping[activation_fns[0]]
             #self.activation_fn,
         ))
         for i in range(num_linear_layers - 1):
+            new_dim = linear_layers_dim[i+1]
+            old_dim = linear_layers_dim[i]
             norm_type = normalisation[i]
             activation_fn = self.activation_function_mapping[activation_fns[i + 1]]
             dropout_prob = pooler_dropout[i + 1] / 10
             norm_layer = {
-                "batch": nn.BatchNorm1d(inner_dim),
-                "layer": nn.LayerNorm(inner_dim),
+                "batch": nn.BatchNorm1d(new_dim),
+                "layer": nn.LayerNorm(new_dim),
                 "none": nn.Identity()
             }.get(norm_type, nn.Identity())
             #layers.append(nn.Linear(inner_dim, inner_dim))
             layers.append(nn.Sequential(
-                nn.Linear(inner_dim, inner_dim),
+                nn.Linear(old_dim, new_dim),
                 nn.Dropout(dropout_prob),
-                #norm_layer,
+                norm_layer,
                 activation_fn 
                 #self.activation_fn,
             ))
         self.hidden_layers = nn.ModuleList(layers)
         if q_noise != 0:
             raise NotImplementedError
-        self.out_proj = nn.Linear(inner_dim, num_classes)
+        self.out_proj = nn.Linear(new_dim, num_classes)
         if do_spectral_norm:
             if q_noise != 0:
                 raise NotImplementedError(
@@ -436,6 +439,8 @@ class MusicBertTokenClassification(BertPreTrainedModel):
             #num_linear_layers = config.num_linear_layers
             
         )
+        print(f"Selected head")
+        print(self.classifier)
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -548,7 +553,8 @@ class RobertaSequenceMultiTaggingHead(nn.Module):
                     qn_block_size = qn_block_size,
                     do_spectral_norm=do_spectral_norm,
                     num_linear_layers=target_params["num_linear_layers"],
-                    normalisation = target_params["normalisation"]
+                    normalisation = target_params["normalisation"],
+                    linear_layers_dim = target_params["linear_layers_dim"]
                 )
             sub_heads.append(
                 head

@@ -193,20 +193,30 @@ def objective(trial):
     else:
         os.environ.pop("WANDB_PROJECT", None)
     hyperparams_dict = {}
-    parameters = {"num_linear_layers": [2, 6], "activation_fn": ["tanh", "relu"], "pooler_dropout": [0,5] }
+    parameters = {"num_linear_layers": [2, 6], "activation_fn": ["tanh", "relu"], "pooler_dropout": [0,5], "normalisation" :  ["batch", "layer", "no"] }
     for target in (config.targets):
         target_params = {}
-        for param in parameters.keys():
-            if param == "pooler_dropout":
-                target_params[param]= []
-                for i in  range(target_params["num_linear_layers"]):
-                    target_params[param].append(trial.suggest_int(param + "_" + target + "_" +str(i), parameters[param][0], parameters[param][1]))   # don't forget to divide by 10 later
-            elif param == "activation_fn":
-                target_params[param]= []
-                for i in  range(target_params["num_linear_layers"]):
-                    target_params[param].append( trial.suggest_categorical(param + "_" + target + "_" +str(i), parameters[param]))
-            else:
-                target_params[param] = trial.suggest_int(param + "_" + target, parameters[param][0], parameters[param][1])
+        # First choose num_linear_layers to use in later loops
+        target_params["num_linear_layers"] = trial.suggest_int(
+            f"num_linear_layers_{target}",
+            parameters["num_linear_layers"][0],
+            parameters["num_linear_layers"][1],
+        )
+        num_layers = target_params["num_linear_layers"]
+        # Activation function per layer
+        target_params["activation_fn"] = [
+            trial.suggest_categorical(f"activation_fn_{target}_{i}", parameters["activation_fn"])
+            for i in range(num_layers)
+        ]
+        # Dropout per layer
+        target_params["pooler_dropout"] = [
+            trial.suggest_int(f"pooler_dropout_{target}_{i}", parameters["pooler_dropout"][0], parameters["pooler_dropout"][1])
+            for i in range(num_layers)
+        ]
+        target_params["normalisation"] = [
+            trial.suggest_categorical(f"normalisation_{target}_{i}", parameters["normalisation"])
+            for i in range(num_layers)
+        ]
         hyperparams_dict[target] = target_params
     # Reload config and training_kwargs
     #config, training_kwargs = get_config_and_training_kwargs(config_dict=config_data)
@@ -218,8 +228,8 @@ def objective(trial):
     # Prepare dataset
     train_dataset = get_dataset(config, "train")
     valid_dataset = get_dataset(config, "valid")
-    train_dataset = LimitedDataset(train_dataset, limit=30)
-    valid_dataset = LimitedDataset(valid_dataset, limit=20)
+    #train_dataset = LimitedDataset(train_dataset, limit=30)
+    #valid_dataset = LimitedDataset(valid_dataset, limit=20)
     # Load model
     if not config.checkpoint_path:
         raise ValueError("checkpoint_path must be provided")
@@ -246,8 +256,8 @@ def objective(trial):
         }
     else:
         if config.conditioning:
-            raise NotImplementedError("Conditioning not supported in single-task mode")
-        model = load_musicbert_token_classifier_from_fairseq_checkpoint(
+            raise NotImplementedError("Conditioning not supported in single-task mode") 
+        model = load_musicbert_token_classifier_from_fairseq_checkpoint(   # end up here when we only have one task(Polina)
             hyperparams_dict,
             config.checkpoint_path,
             checkpoint_type="musicbert",
@@ -275,8 +285,8 @@ def objective(trial):
         logging_dir= config.log_dir,
         max_steps= config.max_steps,
         eval_strategy= "steps",
-        eval_steps= 5,
-        save_steps = 5,
+        eval_steps= 1000,
+        save_steps = 1000,
         load_best_model_at_end = True,
         metric_for_best_model= "accuracy",
         greater_is_better= True,
@@ -297,9 +307,9 @@ def objective(trial):
     ) if config.multitask else compute_metrics
     print(f"starting with the model training")
     print(f"max_steps {config.max_steps}")
-    """
-    wandb.init(project="musicbert", name=f"0with_eval_{trial.number}", config=hyperparams_dict)
-      """     
+    #"""
+    wandb.init(project="musicbert", name=f"0more_optuna_{trial.number}", config=hyperparams_dict)
+      #"""     
     trainer = Trainer(
         model=model,
         args=training_args,

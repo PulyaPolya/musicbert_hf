@@ -314,13 +314,15 @@ class RobertaSequenceTaggingHead(nn.Module):
         input_dim,
         inner_dim,
         num_classes,
-        activation_fn,
+        activation_fns,
         pooler_dropout,
+        normalisation,
         num_hidden_layers=1,
         q_noise=0,
         qn_block_size=8,
         do_spectral_norm=False,
-        num_linear_layers = 1  # linear layers at the end of the model in total
+        num_linear_layers = 1,
+          # linear layers at the end of the model in total
     ):
         super().__init__()
         #self.activation_fn = from_fairseq.get_activation_fn(activation_fn)
@@ -335,15 +337,24 @@ class RobertaSequenceTaggingHead(nn.Module):
         layers.append(nn.Sequential(
             nn.Linear(input_dim, inner_dim),
             nn.Dropout(p=pooler_dropout[0] /10),
-            self.activation_function_mapping[activation_fn[0]]
+            self.activation_function_mapping[activation_fns[0]]
             #self.activation_fn,
         ))
         for i in range(num_linear_layers - 1):
+            norm_type = normalisation[i]
+            activation_fn = self.activation_function_mapping[activation_fns[i + 1]]
+            dropout_prob = pooler_dropout[i + 1] / 10
+            norm_layer = {
+                "batch": nn.BatchNorm1d(inner_dim),
+                "layer": nn.LayerNorm(inner_dim),
+                "none": nn.Identity()
+            }.get(norm_type, nn.Identity())
             #layers.append(nn.Linear(inner_dim, inner_dim))
-             layers.append(nn.Sequential(
+            layers.append(nn.Sequential(
                 nn.Linear(inner_dim, inner_dim),
-                nn.Dropout(p=pooler_dropout[i+1] /10),
-                self.activation_function_mapping[activation_fn[i+1]]
+                nn.Dropout(dropout_prob),
+                #norm_layer,
+                activation_fn 
                 #self.activation_fn,
             ))
         self.hidden_layers = nn.ModuleList(layers)
@@ -405,16 +416,24 @@ class MusicBertTokenClassification(BertPreTrainedModel):
             if config.classifier_dropout is not None
             else config.hidden_dropout_prob
         )
+        param_dict = config.hyperparams
+        target_params = next(iter(param_dict.values()))
         # self.dropout = nn.Dropout(classifier_dropout)
         self.classifier = RobertaSequenceTaggingHead(
             input_dim=config.hidden_size,
             inner_dim=config.hidden_size,
             num_classes=config.num_labels,
+            activation_fns=target_params["activation_fn"] ,
+            pooler_dropout=target_params["pooler_dropout"],
+            num_linear_layers=target_params["num_linear_layers"],
+            normalisation = target_params["normalisation"]
+            
+            #config = config
             #activation_fn=config.classifier_activation,
-            activation_fn=config.activation_fn,
+            #activation_fn=config.activation_fn,
             #pooler_dropout=classifier_dropout,
-            pooler_dropout=config.pooler_dropout,
-            num_linear_layers = config.num_linear_layers
+            #pooler_dropout=config.pooler_dropout,
+            #num_linear_layers = config.num_linear_layers
             
         )
 
@@ -523,12 +542,13 @@ class RobertaSequenceMultiTaggingHead(nn.Module):
                     input_dim=input_dim,
                     inner_dim=inner_dim,
                     num_classes=n_class,
-                    activation_fn=target_params["activation_fn"] ,
+                    activation_fns=target_params["activation_fn"] ,
                     pooler_dropout=target_params["pooler_dropout"],
                     q_noise = q_noise,
                     qn_block_size = qn_block_size,
                     do_spectral_norm=do_spectral_norm,
-                    num_linear_layers=target_params["num_linear_layers"]
+                    num_linear_layers=target_params["num_linear_layers"],
+                    normalisation = target_params["normalisation"]
                 )
             sub_heads.append(
                 head

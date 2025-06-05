@@ -343,6 +343,7 @@ def objective(trial):
     return eval_result["eval_accuracy"] 
 
 if __name__ == "__main__":
+    """
     print("start")
     study = optuna.create_study(direction="maximize")
     study.optimize(objective, n_trials=1)
@@ -354,19 +355,24 @@ if __name__ == "__main__":
     with open ("best_summary.json", "w") as f:
         json.dump(best_summary, f, indent = 4)
     print("Best hyperparameters:", study.best_params)
+    """
     print("evaluating the model from hf")
+    with open('best_summary.json') as json_file:
+        best_trial = json.load(json_file)
     with open("scripts/finetune_params.json") as f:
         config_dict = json.load(f)
     #best_trial = {'activation_fn': 'tanh', 'pooler_dropout': 0}
     
-    config_dict.update(best_trial.params) # best_trial.params
+    
     best_config = Config(**config_dict)
     #os.environ["HF_TOKEN"] = best_config.hf_token
     train_dataset = get_dataset(best_config, "train")
     #train_dataset = LimitedDataset(train_dataset, limit=30)
     test_dataset = get_dataset(best_config, "test")     # don't forget to change back to test
     #tsest_dataset = LimitedDataset(test_dataset, limit=10)
-    model = MusicBertMultiTaskTokenClassification.from_pretrained(best_config.hf_repository)
+    config_dict["hyperparams"] = best_trial
+    #config_dict.update(best_trial) # best_trial.params
+    model = MusicBertTokenClassification.from_pretrained(config_dict["hf_repository"])
     
 
     model.config.multitask_label2id = train_dataset.stois

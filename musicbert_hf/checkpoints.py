@@ -68,7 +68,7 @@ def _load_from_checkpoint(
     )
 
     model = model_cls(bert_config)
-    summary(model)
+    #summary(model)
     total_layers = sum ( 1 for _ in model.named_modules())
     print(f"total number of layers {total_layers}")   #this is where the model is created (polina)
     dst_state_dict = model.state_dict()

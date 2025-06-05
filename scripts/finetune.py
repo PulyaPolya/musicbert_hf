@@ -347,6 +347,12 @@ if __name__ == "__main__":
     study = optuna.create_study(direction="maximize")
     study.optimize(objective, n_trials=1)
     best_trial = study.best_trial
+    best_summary = {
+    **study.best_trial.params,
+    "accuracy": study.best_trial.value
+    }
+    with open ("best_summary.json", "w") as f:
+        json.dump(best_summary, f, indent = 4)
     print("Best hyperparameters:", study.best_params)
     print("evaluating the model from hf")
     with open("scripts/finetune_params.json") as f:

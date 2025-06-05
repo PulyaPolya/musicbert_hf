@@ -429,7 +429,8 @@ class MusicBertTokenClassification(BertPreTrainedModel):
             activation_fns=target_params["activation_fn"] ,
             pooler_dropout=target_params["pooler_dropout"],
             num_linear_layers=target_params["num_linear_layers"],
-            normalisation = target_params["normalisation"]
+            normalisation = target_params["normalisation"],
+            linear_layers_dim = target_params["linear_layers_dim"]
             
             #config = config
             #activation_fn=config.classifier_activation,

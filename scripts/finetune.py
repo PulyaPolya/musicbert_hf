@@ -94,9 +94,6 @@ class Config:
     # If None, freeze all layers; if int, freeze all layers up to and including
     #   the specified layer; if sequence of ints, freeze the specified layers
     freeze_layers: int | Sequence[int] | None = None
-    #num_linear_layers : int = 1
-    #activation_fn: str | None = None
-    #pooler_dropout : int = 0
     # In general, we want to leave job_id as None and set automatically, but for
     #   local testing we can set it manually
     job_id: str | None = None
@@ -196,8 +193,8 @@ def objective(trial):
     # Prepare dataset
     train_dataset = get_dataset(config, "train")
     valid_dataset = get_dataset(config, "valid")
-    train_dataset = LimitedDataset(train_dataset, limit=30)
-    valid_dataset = LimitedDataset(valid_dataset, limit=20)
+    #train_dataset = LimitedDataset(train_dataset, limit=30)
+    #valid_dataset = LimitedDataset(valid_dataset, limit=20)
     hyperparams_dict = {}
     parameters = {"num_linear_layers": [2, 6], "activation_fn": ["tanh", "relu"],
                   "pooler_dropout": [0,5], "normalisation" :  ["none", "layer"] }
@@ -293,8 +290,8 @@ def objective(trial):
         logging_dir= config.log_dir,
         max_steps= config.max_steps,
         eval_strategy= "steps",
-        eval_steps= 5,
-        save_steps = 5,
+        eval_steps= 1000,   #for full 1000
+        save_steps = 1000,  #for full 1000
         load_best_model_at_end = True,
         metric_for_best_model= "accuracy",
         greater_is_better= True,
@@ -315,9 +312,9 @@ def objective(trial):
     ) if config.multitask else compute_metrics
     print(f"starting with the model training")
     print(f"max_steps {config.max_steps}")
-    """
-    wandb.init(project="musicbert", name=f"0more_optuna_{trial.number}", config=hyperparams_dict)
-      """     
+    #"""
+    wandb.init(project="musicbert", name=f"0only_inversion_{trial.number}", config=hyperparams_dict)
+      #"""     
     trainer = Trainer(
         model=model,
         args=training_args,

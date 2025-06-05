@@ -229,7 +229,6 @@ def objective(trial):
         ]
         hyperparams_dict[target] = target_params
     # Reload config and training_kwargs
-    #config, training_kwargs = get_config_and_training_kwargs(config_dict=config_data)
     long_degree = "primary_alteration_primary_degree_secondary_alteration_secondary_degree"
     hyperparams_df = pd.DataFrame.from_dict(hyperparams_dict).T
     hyperparams_df.rename(index = {long_degree: "degree"}, inplace=True)

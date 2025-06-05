@@ -56,6 +56,8 @@ from musicbert_hf.data import HDF5Dataset, collate_for_musicbert_fn
 from musicbert_hf.metrics import compute_metrics, compute_metrics_multitask
 from musicbert_hf.models import freeze_layers, MusicBertTokenClassification, MusicBertMultiTaskTokenClassification
 
+TESTING = True
+
 class LimitedDataset:
     def __init__(self, base_dataset, limit):
         self.base_dataset = base_dataset
@@ -172,9 +174,6 @@ def get_config_and_training_kwargs(config_path=None):
     config = Config(**config_kwargs)  # type:ignore
     return config, training_kwargs
 
-def model_init(model):
-    return model
-
 
 def objective(trial):
     # Load original config from JSON
@@ -193,8 +192,9 @@ def objective(trial):
     # Prepare dataset
     train_dataset = get_dataset(config, "train")
     valid_dataset = get_dataset(config, "valid")
-    #train_dataset = LimitedDataset(train_dataset, limit=30)
-    #valid_dataset = LimitedDataset(valid_dataset, limit=20)
+    if TESTING:
+        train_dataset = LimitedDataset(train_dataset, limit=30)
+        valid_dataset = LimitedDataset(valid_dataset, limit=20)
     hyperparams_dict = {}
     parameters = {"num_linear_layers": [2, 6], "activation_fn": ["tanh", "relu"],
                   "pooler_dropout": [0,5], "normalisation" :  ["none", "layer"] }
@@ -229,11 +229,15 @@ def objective(trial):
         ]
         hyperparams_dict[target] = target_params
     # Reload config and training_kwargs
+    config.freeze_layers = trial.suggest_int(f"freeze_layers", 6, 11)
+    config.batch_size = trial.suggest_int(f"batch_size", 2, 8, step = 2)
+    config.learning_rate = trial.suggest_float("learning_rate", 1e-5, 1e-3, log = True)
     long_degree = "primary_alteration_primary_degree_secondary_alteration_secondary_degree"
     hyperparams_df = pd.DataFrame.from_dict(hyperparams_dict).T
     hyperparams_df.rename(index = {long_degree: "degree"}, inplace=True)
     print("Chosen hyperparameters")
     print(hyperparams_df)
+    print(f"number of frozen layers: {config.freeze_layers}, batch_size : {config.batch_size}, learning_rate: {config.learning_rate}")
     # Load model
     if not config.checkpoint_path:
         raise ValueError("checkpoint_path must be provided")
@@ -277,6 +281,11 @@ def objective(trial):
 
     freeze_layers(model, config.freeze_layers)
     summary(model)
+    eval_steps = 5 if TESTING else 1000
+    if TESTING:
+        config.max_steps = 10
+        config.warmup_steps = 2
+        push_to_hub = False
     # Update training kwargs with trial-specific parameters
     training_kwargs =(
         dict(
@@ -289,15 +298,15 @@ def objective(trial):
         logging_dir= config.log_dir,
         max_steps= config.max_steps,
         eval_strategy= "steps",
-        eval_steps= 1000,   #for full 1000
-        save_steps = 1000,  #for full 1000
+        eval_steps= eval_steps,   #for full 1000
+        save_steps = eval_steps,  #for full 1000
         load_best_model_at_end = True,
         metric_for_best_model= "accuracy",
         greater_is_better= True,
         save_total_limit= 2,
         save_strategy = "steps",
         report_to = "wandb",
-        push_to_hub= True,
+        push_to_hub= push_to_hub,
         hub_model_id = config.hf_repository,
         eval_on_start= False,
     )| training_kwargs
@@ -311,8 +320,9 @@ def objective(trial):
     ) if config.multitask else compute_metrics
     print(f"starting with the model training")
     print(f"max_steps {config.max_steps}")
+    if not TESTING:
     #"""
-    wandb.init(project="musicbert", name=f"0only_inversion_{trial.number}", config=hyperparams_dict)
+        wandb.init(project="musicbert", name=f"0only_inversion_{trial.number}", config=hyperparams_dict)
       #"""     
     trainer = Trainer(
         model=model,

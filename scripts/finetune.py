@@ -102,6 +102,7 @@ class Config:
     job_id: str | None = None
     hf_repository: str | None = None
     hf_token: str | None = None
+    TESTING: bool | None = True
 
     def __post_init__(self):
         assert self.num_epochs is not None or self.max_steps is not None, (
@@ -175,179 +176,198 @@ def get_config_and_training_kwargs(config_path=None):
     config = Config(**config_kwargs)  # type:ignore
     return config, training_kwargs
 
-
-def objective(trial):
+def make_objective(config, train_dataset, valid_dataset, test_dataset):
+    def objective(trial):
     # Load original config from JSON
-    #_, training_kwargs = get_config_and_training_kwargs(config_path= "scripts/finetune_params.json")
+        _, training_kwargs = get_config_and_training_kwargs(config_path= "scripts/finetune_params.json")
 
-    with open("scripts/finetune_params.json") as f:
-        config_dict = json.load(f)
-    config = Config(**config_dict)
-    os.environ["HF_TOKEN"] = config.hf_token
-    # W&B setup
-    if config.wandb_project:
-        os.environ["WANDB_PROJECT"] = config.wandb_project
-    else:
-        os.environ.pop("WANDB_PROJECT", None)
-    
-    # Prepare dataset
-    train_dataset = get_dataset(config, "train")
-    valid_dataset = get_dataset(config, "valid")
-    if TESTING:
-        train_dataset = LimitedDataset(train_dataset, limit=30)
-        valid_dataset = LimitedDataset(valid_dataset, limit=20)
-    hyperparams_dict = {}
-    parameters = {"num_linear_layers": [2, 6], "activation_fn": ["tanh", "relu"],
-                  "pooler_dropout": [0,5], "normalisation" :  ["none", "layer"] }
-    for target in (config.targets):
-        target_params = {}
-        # First choose num_linear_layers to use in later loops
-        target_params["num_linear_layers"] = trial.suggest_int(
-            f"num_linear_layers_{target}",
-            parameters["num_linear_layers"][0],
-            parameters["num_linear_layers"][1],
-        )
-        num_layers = target_params["num_linear_layers"]
-        max_dim = max(768, train_dataset.vocab_sizes[config.targets.index(target)] )
-        min_dim = min (32, train_dataset.vocab_sizes[config.targets.index(target)])
-        target_params["linear_layers_dim"]  = sorted([
-            trial.suggest_int(f"layer_dim_{target}_{i}", min_dim, max_dim)
-            for i in range(num_layers)
-        ], reverse= True)
-        # Activation function per layer
-        target_params["activation_fn"] = [
-            trial.suggest_categorical(f"activation_fn_{target}_{i}", parameters["activation_fn"])
-            for i in range(num_layers)
-        ]
-        # Dropout per layer
-        target_params["pooler_dropout"] = [
-            trial.suggest_int(f"pooler_dropout_{target}_{i}", parameters["pooler_dropout"][0], parameters["pooler_dropout"][1])
-            for i in range(num_layers)
-        ]
-        target_params["normalisation"] = [
-            trial.suggest_categorical(f"normalisation_{target}_{i}", parameters["normalisation"])
-            for i in range(num_layers)
-        ]
-        hyperparams_dict[target] = target_params
-    # Reload config and training_kwargs
-    config.freeze_layers = trial.suggest_int(f"freeze_layers", 6, 11)
-    config.batch_size = trial.suggest_int(f"batch_size", 2, 8, step = 2)
-    config.learning_rate = trial.suggest_float("learning_rate", 1e-5, 1e-3, log = True)
-    long_degree = "primary_alteration_primary_degree_secondary_alteration_secondary_degree"
-    hyperparams_df = pd.DataFrame.from_dict(hyperparams_dict).T
-    hyperparams_df.rename(index = {long_degree: "degree"}, inplace=True)
-    print("Chosen hyperparameters")
-    print(hyperparams_df)
-    print(f"number of frozen layers: {config.freeze_layers}, batch_size : {config.batch_size}, learning_rate: {config.learning_rate}")
-    # Load model
-    if not config.checkpoint_path:
-        raise ValueError("checkpoint_path must be provided")
-
-    if config.multitask:
-        if config.conditioning:
-            model = load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint(
-                config.checkpoint_path,
-                checkpoint_type="musicbert",
-                num_labels=train_dataset.vocab_sizes,
-                z_vocab_size=train_dataset.conditioning_vocab_size,
-            )
+        ##with open("scripts/finetune_params.json") as f:
+          #  config_dict = json.load(f)
+        #config = Config(**config_dict)
+        #os.environ["HF_TOKEN"] = config.hf_token
+        # W&B setup
+        if config.wandb_project:
+            os.environ["WANDB_PROJECT"] = config.wandb_project
         else:
-            model = load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
+            os.environ.pop("WANDB_PROJECT", None)
+        
+        # Prepare dataset
+        #train_dataset = get_dataset(config, "train")
+        #valid_dataset = get_dataset(config, "valid")
+        #if TESTING:
+           # train_dataset = LimitedDataset(train_dataset, limit=30)
+            #valid_dataset = LimitedDataset(valid_dataset, limit=20)
+        hyperparams_dict = {}
+        parameters = {"num_linear_layers": [2, 6], "activation_fn": ["tanh", "relu"],
+                    "pooler_dropout": [0,5], "normalisation" :  ["none", "layer"] }
+        for target in (config.targets):
+            target_params = {}
+            # First choose num_linear_layers to use in later loops
+            target_params["num_linear_layers"] = trial.suggest_int(
+                f"num_linear_layers_{target}",
+                parameters["num_linear_layers"][0],
+                parameters["num_linear_layers"][1],
+            )
+            num_layers = target_params["num_linear_layers"]
+            max_dim = max(768, train_dataset.vocab_sizes[config.targets.index(target)] )
+            min_dim = min (32, train_dataset.vocab_sizes[config.targets.index(target)])
+            target_params["linear_layers_dim"]  = sorted([
+                trial.suggest_int(f"layer_dim_{target}_{i}", min_dim, max_dim)
+                for i in range(num_layers)
+            ], reverse= True)
+            # Activation function per layer
+            target_params["activation_fn"] = [
+                trial.suggest_categorical(f"activation_fn_{target}_{i}", parameters["activation_fn"])
+                for i in range(num_layers)
+            ]
+            # Dropout per layer
+            target_params["pooler_dropout"] = [
+                trial.suggest_int(f"pooler_dropout_{target}_{i}", parameters["pooler_dropout"][0], parameters["pooler_dropout"][1])
+                for i in range(num_layers)
+            ]
+            target_params["normalisation"] = [
+                trial.suggest_categorical(f"normalisation_{target}_{i}", parameters["normalisation"])
+                for i in range(num_layers)
+            ]
+            hyperparams_dict[target] = target_params
+        # Reload config and training_kwargs
+        config.freeze_layers = trial.suggest_int(f"freeze_layers", 6, 11)
+        config.batch_size = trial.suggest_int(f"batch_size", 2, 8, step = 2)
+        config.learning_rate = trial.suggest_float("learning_rate", 1e-5, 1e-3, log = True)
+        long_degree = "primary_alteration_primary_degree_secondary_alteration_secondary_degree"
+        hyperparams_df = pd.DataFrame.from_dict(hyperparams_dict).T
+        hyperparams_df.rename(index = {long_degree: "degree"}, inplace=True)
+        print("Chosen hyperparameters")
+        print(hyperparams_df)
+        print(f"number of frozen layers: {config.freeze_layers}, batch_size : {config.batch_size}, learning_rate: {config.learning_rate}")
+        # Load model
+        if not config.checkpoint_path:
+            raise ValueError("checkpoint_path must be provided")
+
+        if config.multitask:
+            if config.conditioning:
+                model = load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint(
+                    config.checkpoint_path,
+                    checkpoint_type="musicbert",
+                    num_labels=train_dataset.vocab_sizes,
+                    z_vocab_size=train_dataset.conditioning_vocab_size,
+                )
+            else:
+                model = load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
+                    hyperparams_dict,
+                    config.checkpoint_path,
+                    checkpoint_type="musicbert",
+                    num_labels=train_dataset.vocab_sizes,
+                )
+            model.config.multitask_label2id = train_dataset.stois
+            model.config.multitask_id2label = {
+                target: {v: k for k, v in train_dataset.stois[target].items()}
+                for target in train_dataset.stois
+            }
+        else:
+            if config.conditioning:
+                raise NotImplementedError("Conditioning not supported in single-task mode") 
+            model = load_musicbert_token_classifier_from_fairseq_checkpoint(   # end up here when we only have one task(Polina)
                 hyperparams_dict,
                 config.checkpoint_path,
                 checkpoint_type="musicbert",
-                num_labels=train_dataset.vocab_sizes,
+                num_labels=train_dataset.vocab_sizes[0],
+                
             )
-        model.config.multitask_label2id = train_dataset.stois
-        model.config.multitask_id2label = {
-            target: {v: k for k, v in train_dataset.stois[target].items()}
-            for target in train_dataset.stois
-        }
-    else:
+            model.config.label2id = list(train_dataset.stois.values())[0]
+            model.config.id2label = {v: k for k, v in model.config.label2id.items()}
+
+        model.config.targets = list(config.targets)
         if config.conditioning:
-            raise NotImplementedError("Conditioning not supported in single-task mode") 
-        model = load_musicbert_token_classifier_from_fairseq_checkpoint(   # end up here when we only have one task(Polina)
-            hyperparams_dict,
-            config.checkpoint_path,
-            checkpoint_type="musicbert",
-            num_labels=train_dataset.vocab_sizes[0],
-            
+            model.config.conditioning = config.conditioning
+
+        freeze_layers(model, config.freeze_layers)
+        summary(model)
+        eval_steps = 5 if TESTING else 1000
+        if TESTING:
+            config.max_steps = 10
+            config.warmup_steps = 2
+            push_to_hub = False
+
+        # Update training kwargs with trial-specific parameters
+        training_kwargs =(
+            dict(
+            output_dir= config.output_dir,
+            num_train_epochs= config.num_epochs,
+            per_device_train_batch_size= config.batch_size,
+            per_device_eval_batch_size=config.batch_size,
+            learning_rate= config.learning_rate,
+            warmup_steps= config.warmup_steps,
+            logging_dir= config.log_dir,
+            max_steps= config.max_steps,
+            eval_strategy= "steps",
+            eval_steps= eval_steps,   #for full 1000
+            save_steps = eval_steps,  #for full 1000
+            load_best_model_at_end = True,
+            metric_for_best_model= "accuracy",
+            greater_is_better= True,
+            save_total_limit= 2,
+            save_strategy = "steps",
+            report_to = "wandb",
+            push_to_hub= push_to_hub,
+            hub_model_id = config.hf_repository,
+            eval_on_start= False,
+        )| training_kwargs
         )
-        model.config.label2id = list(train_dataset.stois.values())[0]
-        model.config.id2label = {v: k for k, v in model.config.label2id.items()}
 
-    model.config.targets = list(config.targets)
-    if config.conditioning:
-        model.config.conditioning = config.conditioning
+        training_kwargs["report_to"] = "wandb" #if config.wandb_project else None
+        training_args = TrainingArguments(**training_kwargs)
 
-    freeze_layers(model, config.freeze_layers)
-    summary(model)
-    eval_steps = 5 if TESTING else 1000
-    if TESTING:
-        config.max_steps = 10
-        config.warmup_steps = 2
-        push_to_hub = False
-    # Update training kwargs with trial-specific parameters
-    training_kwargs =(
-        dict(
-        output_dir= config.output_dir,
-        num_train_epochs= config.num_epochs,
-        per_device_train_batch_size= config.batch_size,
-        per_device_eval_batch_size=config.batch_size,
-        learning_rate= config.learning_rate,
-        warmup_steps= config.warmup_steps,
-        logging_dir= config.log_dir,
-        max_steps= config.max_steps,
-        eval_strategy= "steps",
-        eval_steps= eval_steps,   #for full 1000
-        save_steps = eval_steps,  #for full 1000
-        load_best_model_at_end = True,
-        metric_for_best_model= "accuracy",
-        greater_is_better= True,
-        save_total_limit= 2,
-        save_strategy = "steps",
-        report_to = "wandb",
-        push_to_hub= push_to_hub,
-        hub_model_id = config.hf_repository,
-        eval_on_start= False,
-    )| training_kwargs
-    )
+        compute_metrics_fn = partial(
+            compute_metrics_multitask, task_names=config.targets
+        ) if config.multitask else compute_metrics
+        print(f"starting with the model training")
+        print(f"max_steps {config.max_steps}")
+        if not TESTING:
+        #"""
+            wandb.init(project="musicbert", name=f"0only_inversion_{trial.number}", config=hyperparams_dict)
+        #"""     
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            data_collator=partial(collate_for_musicbert_fn, multitask=config.multitask),
+            train_dataset=train_dataset,
+            eval_dataset=valid_dataset,
+            compute_loss_func=partial(model.compute_loss),
+            compute_metrics=compute_metrics_fn,
+            callbacks = [EarlyStoppingCallback(early_stopping_patience =4)]
+        )
 
-    training_kwargs["report_to"] = "wandb" #if config.wandb_project else None
-    training_args = TrainingArguments(**training_kwargs)
+        trainer.train()
+        print(f"evaluating the model")
+        eval_result = trainer.evaluate()
+        #wandb.log({"eval_accuracy": eval_result["eval_accuracy"]})
 
-    compute_metrics_fn = partial(
-        compute_metrics_multitask, task_names=config.targets
-    ) if config.multitask else compute_metrics
-    print(f"starting with the model training")
-    print(f"max_steps {config.max_steps}")
-    if not TESTING:
-    #"""
-        wandb.init(project="musicbert", name=f"0only_inversion_{trial.number}", config=hyperparams_dict)
-      #"""     
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        data_collator=partial(collate_for_musicbert_fn, multitask=config.multitask),
-        train_dataset=train_dataset,
-        eval_dataset=valid_dataset,
-        compute_loss_func=partial(model.compute_loss),
-        compute_metrics=compute_metrics_fn,
-        callbacks = [EarlyStoppingCallback(early_stopping_patience =4)]
-    )
-
-    trainer.train()
-    print(f"evaluating the model")
-    eval_result = trainer.evaluate()
-    #wandb.log({"eval_accuracy": eval_result["eval_accuracy"]})
-
-    return eval_result["eval_accuracy"] 
+        return eval_result["eval_accuracy"] 
+    return objective
 
 if __name__ == "__main__":
-    """
+   
     print("start")
+    with open("scripts/finetune_params.json") as f:
+        config_dict = json.load(f)
+    config_params = Config(**config_dict)
+    os.environ["HF_TOKEN"] = config_params.hf_token
+    os.environ["HF_TOKEN"] = config_params.hf_token
+    global TESTING  
+    TESTING  = config_params.TESTING
+    #train_dataset = get_dataset(config_params, "train")
+    #train_dataset = LimitedDataset(train_dataset, limit=30)
+    test_dataset = get_dataset(config_params, "test")    
+    train_dataset = get_dataset(config_params, "train")
+    valid_dataset = get_dataset(config_params, "valid")
+    if TESTING:
+        train_dataset = LimitedDataset(train_dataset, limit=30)
+        valid_dataset = LimitedDataset(valid_dataset, limit=20)
+        test_dataset = LimitedDataset(test_dataset, limit=20)
+    #"""
     study = optuna.create_study(direction="maximize")
-    study.optimize(objective, n_trials=1)
+    study.optimize(make_objective(config_params, train_dataset, valid_dataset, test_dataset), n_trials=1)
     best_trial = study.best_trial
     best_summary = {
     **study.best_trial.params,
@@ -356,28 +376,18 @@ if __name__ == "__main__":
     with open ("best_summary.json", "w") as f:
         json.dump(best_summary, f, indent = 4)
     print("Best hyperparameters:", study.best_params)
-    """
+    #"""
     print("evaluating the model from hf")
     with open('best_summary.json') as json_file:
         best_trial = json.load(json_file)
-    with open("scripts/finetune_params.json") as f:
-        config_dict = json.load(f)
     
-    #best_trial = {'activation_fn': 'tanh', 'pooler_dropout': 0}
+    #best_trial = {'activation_fn': 'tanh', 'pooler_dropout': 0} 
     
     
-    config_params = Config(**config_dict)
-    global TESTING  
-    TESTING  = config_dict.TESTING
-    #os.environ["HF_TOKEN"] = best_config.hf_token
-    train_dataset = get_dataset(config_params, "train")
-    #train_dataset = LimitedDataset(train_dataset, limit=30)
-    test_dataset = get_dataset(config_params, "test")     # don't forget to change back to test
     #tsest_dataset = LimitedDataset(test_dataset, limit=10)
     config_dict["hyperparams"] = best_trial
-    os.environ["HF_TOKEN"] = config_params.hf_token
     config = BertConfig.from_pretrained(config_dict["hf_repository"], force_download=True) # thus ensures that the most
-                                                                                # up-to-date model is loaded
+                                                                                # up-to-date model is loaded (polina)
     #config.hyperparams = best_trial
     #config_dict.update(best_trial) # best_trial.params
     model = MusicBertTokenClassification.from_pretrained(config_dict["hf_repository"], config= config)

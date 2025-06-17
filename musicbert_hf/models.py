@@ -420,7 +420,10 @@ class MusicBertTokenClassification(BertPreTrainedModel):
             else config.hidden_dropout_prob
         )
         param_dict = config.hyperparams
-        target_params = next(iter(param_dict.values()))
+       # if len(config.targets) > 1:
+        target_params = next(iter(param_dict.values())) # TODO: change for the multitask case
+        #else:
+        #    target_params = param_dict.copy()
         # self.dropout = nn.Dropout(classifier_dropout)
         self.classifier = RobertaSequenceTaggingHead(
             input_dim=config.hidden_size,

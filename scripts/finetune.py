@@ -35,6 +35,7 @@ import time
 from dataclasses import dataclass
 from functools import partial
 from typing import Literal, Sequence
+from transformers import BertConfig
 from torchinfo import summary
 from omegaconf import OmegaConf
 from transformers import Trainer, TrainingArguments
@@ -56,7 +57,7 @@ from musicbert_hf.data import HDF5Dataset, collate_for_musicbert_fn
 from musicbert_hf.metrics import compute_metrics, compute_metrics_multitask
 from musicbert_hf.models import freeze_layers, MusicBertTokenClassification, MusicBertMultiTaskTokenClassification
 
-TESTING = True
+
 
 class LimitedDataset:
     def __init__(self, base_dataset, limit):
@@ -177,7 +178,7 @@ def get_config_and_training_kwargs(config_path=None):
 
 def objective(trial):
     # Load original config from JSON
-    _, training_kwargs = get_config_and_training_kwargs(config_path= "scripts/finetune_params.json")
+    #_, training_kwargs = get_config_and_training_kwargs(config_path= "scripts/finetune_params.json")
 
     with open("scripts/finetune_params.json") as f:
         config_dict = json.load(f)
@@ -361,18 +362,25 @@ if __name__ == "__main__":
         best_trial = json.load(json_file)
     with open("scripts/finetune_params.json") as f:
         config_dict = json.load(f)
+    
     #best_trial = {'activation_fn': 'tanh', 'pooler_dropout': 0}
     
     
-    best_config = Config(**config_dict)
+    config_params = Config(**config_dict)
+    global TESTING  
+    TESTING  = config_dict.TESTING
     #os.environ["HF_TOKEN"] = best_config.hf_token
-    train_dataset = get_dataset(best_config, "train")
+    train_dataset = get_dataset(config_params, "train")
     #train_dataset = LimitedDataset(train_dataset, limit=30)
-    test_dataset = get_dataset(best_config, "test")     # don't forget to change back to test
+    test_dataset = get_dataset(config_params, "test")     # don't forget to change back to test
     #tsest_dataset = LimitedDataset(test_dataset, limit=10)
     config_dict["hyperparams"] = best_trial
+    os.environ["HF_TOKEN"] = config_params.hf_token
+    config = BertConfig.from_pretrained(config_dict["hf_repository"], force_download=True) # thus ensures that the most
+                                                                                # up-to-date model is loaded
+    #config.hyperparams = best_trial
     #config_dict.update(best_trial) # best_trial.params
-    model = MusicBertTokenClassification.from_pretrained(config_dict["hf_repository"])
+    model = MusicBertTokenClassification.from_pretrained(config_dict["hf_repository"], config= config)
     
 
     model.config.multitask_label2id = train_dataset.stois
@@ -380,24 +388,24 @@ if __name__ == "__main__":
         target: {v: k for k, v in train_dataset.stois[target].items()}
         for target in train_dataset.stois
     }
-    model.config.targets = list(best_config.targets)
+    model.config.targets = list(config_params.targets)
     
     test_args = TrainingArguments(
     #output_dir=best_model_dir,
-    per_device_eval_batch_size=best_config.batch_size,
+    per_device_eval_batch_size=config_params.batch_size,
     report_to=None,
     do_train=False,
     do_eval=True,
     )
     
     compute_metrics_fn = partial(
-    compute_metrics_multitask, task_names=best_config.targets
-    ) if best_config.multitask else compute_metrics
+    compute_metrics_multitask, task_names=config_params.targets
+    ) if config_params.multitask else compute_metrics
     del train_dataset
     test_trainer = Trainer(
         model=model,
         args=test_args,
-        data_collator=partial(collate_for_musicbert_fn, multitask=best_config.multitask),
+        data_collator=partial(collate_for_musicbert_fn, multitask=config_params.multitask),
         eval_dataset=test_dataset,
         compute_metrics=compute_metrics_fn,
     )

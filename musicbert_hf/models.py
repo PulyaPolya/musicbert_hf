@@ -330,7 +330,8 @@ class RobertaSequenceTaggingHead(nn.Module):
         #self.activation_fn =  nn.Tanh()
         self.activation_function_mapping = dict(
             tanh = nn.Tanh(),
-            relu = nn.ReLU()
+            relu = nn.ReLU(),
+            gelu = nn.GELU()
         )
         #self.dropout = nn.Dropout(p=pooler_dropout)
 
@@ -341,6 +342,7 @@ class RobertaSequenceTaggingHead(nn.Module):
             self.activation_function_mapping[activation_fns[0]]
             #self.activation_fn,
         ))
+        new_dim = linear_layers_dim[0]
         for i in range(num_linear_layers - 1):
             new_dim = linear_layers_dim[i+1]
             old_dim = linear_layers_dim[i]

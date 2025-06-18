@@ -94,6 +94,7 @@ class Config:
     warmup_steps: int = 0
     max_steps: int = -1
     wandb_project: str | None = None
+    wandb_name: str | None = None
     # If None, freeze all layers; if int, freeze all layers up to and including
     #   the specified layer; if sequence of ints, freeze the specified layers
     freeze_layers: int | Sequence[int] | None = None
@@ -103,6 +104,7 @@ class Config:
     hf_repository: str | None = None
     hf_token: str | None = None
     TESTING: bool | None = True
+    num_trials: int = 1
 
     def __post_init__(self):
         assert self.num_epochs is not None or self.max_steps is not None, (
@@ -181,24 +183,12 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
     # Load original config from JSON
         _, training_kwargs = get_config_and_training_kwargs(config_path= "scripts/finetune_params.json")
 
-        ##with open("scripts/finetune_params.json") as f:
-          #  config_dict = json.load(f)
-        #config = Config(**config_dict)
-        #os.environ["HF_TOKEN"] = config.hf_token
-        # W&B setup
         if config.wandb_project:
             os.environ["WANDB_PROJECT"] = config.wandb_project
         else:
             os.environ.pop("WANDB_PROJECT", None)
-        
-        # Prepare dataset
-        #train_dataset = get_dataset(config, "train")
-        #valid_dataset = get_dataset(config, "valid")
-        #if TESTING:
-           # train_dataset = LimitedDataset(train_dataset, limit=30)
-            #valid_dataset = LimitedDataset(valid_dataset, limit=20)
         hyperparams_dict = {}
-        parameters = {"num_linear_layers": [2, 6], "activation_fn": ["tanh", "relu"],
+        parameters = {"num_linear_layers": [1, 5], "activation_fn": ["tanh", "relu", "gelu"],
                     "pooler_dropout": [0,5], "normalisation" :  ["none", "layer"] }
         for target in (config.targets):
             target_params = {}
@@ -287,7 +277,7 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
         if TESTING:
             config.max_steps = 10
             config.warmup_steps = 2
-            push_to_hub = False
+        push_to_hub = False if TESTING else True
 
         # Update training kwargs with trial-specific parameters
         training_kwargs =(
@@ -308,14 +298,13 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
             greater_is_better= True,
             save_total_limit= 2,
             save_strategy = "steps",
-            report_to = "wandb",
             push_to_hub= push_to_hub,
             hub_model_id = config.hf_repository,
             eval_on_start= False,
         )| training_kwargs
         )
 
-        training_kwargs["report_to"] = "wandb" #if config.wandb_project else None
+        training_kwargs["report_to"] = "wandb" if config.wandb_name else None
         training_args = TrainingArguments(**training_kwargs)
 
         compute_metrics_fn = partial(
@@ -323,10 +312,10 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
         ) if config.multitask else compute_metrics
         print(f"starting with the model training")
         print(f"max_steps {config.max_steps}")
-        if not TESTING:
-        #"""
-            wandb.init(project="musicbert", name=f"0only_inversion_{trial.number}", config=hyperparams_dict)
-        #"""     
+        if config.wandb_name:
+            params_to_log = ["freeze_layers", "batch_size", "learning_rate"]
+            hyperparams_dict.update( { key:getattr(config, key)  for key in params_to_log if hasattr(config, key)})
+            wandb.init(project="musicbert", name=f"trial_{trial.number}", group= config.wandb_name, config=hyperparams_dict, reinit= True)
         trainer = Trainer(
             model=model,
             args=training_args,
@@ -341,7 +330,8 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
         trainer.train()
         print(f"evaluating the model")
         eval_result = trainer.evaluate()
-        #wandb.log({"eval_accuracy": eval_result["eval_accuracy"]})
+        wandb.log({"eval_accuracy": eval_result["eval_accuracy"]})
+        wandb.finish()
 
         return eval_result["eval_accuracy"] 
     return objective
@@ -353,11 +343,8 @@ if __name__ == "__main__":
         config_dict = json.load(f)
     config_params = Config(**config_dict)
     os.environ["HF_TOKEN"] = config_params.hf_token
-    os.environ["HF_TOKEN"] = config_params.hf_token
     global TESTING  
     TESTING  = config_params.TESTING
-    #train_dataset = get_dataset(config_params, "train")
-    #train_dataset = LimitedDataset(train_dataset, limit=30)
     test_dataset = get_dataset(config_params, "test")    
     train_dataset = get_dataset(config_params, "train")
     valid_dataset = get_dataset(config_params, "valid")
@@ -367,7 +354,7 @@ if __name__ == "__main__":
         test_dataset = LimitedDataset(test_dataset, limit=20)
     #"""
     study = optuna.create_study(direction="maximize")
-    study.optimize(make_objective(config_params, train_dataset, valid_dataset, test_dataset), n_trials=1)
+    study.optimize(make_objective(config_params, train_dataset, valid_dataset, test_dataset), n_trials=config_params.num_trials)
     best_trial = study.best_trial
     best_summary = {
     **study.best_trial.params,
@@ -376,7 +363,7 @@ if __name__ == "__main__":
     with open ("best_summary.json", "w") as f:
         json.dump(best_summary, f, indent = 4)
     print("Best hyperparameters:", study.best_params)
-    #"""
+    """
     print("evaluating the model from hf")
     with open('best_summary.json') as json_file:
         best_trial = json.load(json_file)
@@ -424,4 +411,4 @@ if __name__ == "__main__":
     test_results = test_trainer.evaluate()
     for k, v in test_results.items():
         print(f"{k}: {v:.4f}")
-   
+   """

@@ -103,7 +103,8 @@ class Config:
     job_id: str | None = None
     hf_repository: str | None = None
     hf_token: str | None = None
-    TESTING: bool | None = True
+    TESTING: bool = True
+    RUN_NAS : bool = False
     num_trials: int = 1
 
     def __post_init__(self):
@@ -178,6 +179,27 @@ def get_config_and_training_kwargs(config_path=None):
     config = Config(**config_kwargs)  # type:ignore
     return config, training_kwargs
 
+def get_best_params_from_dict(best_params_dict, target):   # if we want to run the best model, here we can read all parameters from the file
+    hyperparams_dict = {}
+    num_layers = best_params_dict[f"num_linear_layers_{target}"] # TODO expand for multiple targets too
+    
+    target_params = {
+    "linear_layers_dim": [],
+    "activation_fn": [],
+    "pooler_dropout": [],
+    "normalisation": []
+        }                                           # so far it will only work for one target 
+    target_params["num_linear_layers"] = best_params_dict[f"num_linear_layers_{target}"]
+    for i in range(num_layers):
+        target_params["linear_layers_dim"].append(best_params_dict[f"layer_dim_{target}_{i}"])
+        target_params["linear_layers_dim"].sort(reverse = True)
+        target_params["activation_fn"].append(best_params_dict[f"activation_fn_{target}_{i}"])
+        target_params["pooler_dropout"].append(best_params_dict[f"pooler_dropout_{target}_{i}"])
+        target_params["pooler_dropout"].sort(reverse = True)
+        target_params["normalisation"].append(best_params_dict[f"normalisation_{target}_{i}"])  
+    hyperparams_dict[target] = target_params
+    return hyperparams_dict
+
 def make_objective(config, train_dataset, valid_dataset, test_dataset):
     def objective(trial):
     # Load original config from JSON
@@ -187,43 +209,49 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
             os.environ["WANDB_PROJECT"] = config.wandb_project
         else:
             os.environ.pop("WANDB_PROJECT", None)
-        hyperparams_dict = {}
-        parameters = {"num_linear_layers": [1, 5], "activation_fn": ["tanh", "relu", "gelu"],
-                    "pooler_dropout": [0,5], "normalisation" :  ["none", "layer"] }
-        for target in (config.targets):
-            target_params = {}
-            # First choose num_linear_layers to use in later loops
-            target_params["num_linear_layers"] = trial.suggest_int(
-                f"num_linear_layers_{target}",
-                parameters["num_linear_layers"][0],
-                parameters["num_linear_layers"][1],
-            )
-            num_layers = target_params["num_linear_layers"]
-            max_dim = max(768, train_dataset.vocab_sizes[config.targets.index(target)] )
-            min_dim = min (32, train_dataset.vocab_sizes[config.targets.index(target)])
-            target_params["linear_layers_dim"]  = sorted([
-                trial.suggest_int(f"layer_dim_{target}_{i}", min_dim, max_dim)
-                for i in range(num_layers)
-            ], reverse= True)
-            # Activation function per layer
-            target_params["activation_fn"] = [
-                trial.suggest_categorical(f"activation_fn_{target}_{i}", parameters["activation_fn"])
-                for i in range(num_layers)
-            ]
-            # Dropout per layer
-            target_params["pooler_dropout"] = [
-                trial.suggest_int(f"pooler_dropout_{target}_{i}", parameters["pooler_dropout"][0], parameters["pooler_dropout"][1])
-                for i in range(num_layers)
-            ]
-            target_params["normalisation"] = [
-                trial.suggest_categorical(f"normalisation_{target}_{i}", parameters["normalisation"])
-                for i in range(num_layers)
-            ]
-            hyperparams_dict[target] = target_params
-        # Reload config and training_kwargs
-        config.freeze_layers = trial.suggest_int(f"freeze_layers", 6, 11)
-        config.batch_size = trial.suggest_int(f"batch_size", 2, 8, step = 2)
-        config.learning_rate = trial.suggest_float("learning_rate", 1e-5, 1e-3, log = True)
+        if config.RUN_NAS:
+            hyperparams_dict = {}
+            parameters = {"num_linear_layers": [1, 5], "activation_fn": ["tanh", "relu", "gelu"],
+                        "pooler_dropout": [0,5], "normalisation" :  ["none", "layer"] }
+            for target in (config.targets):
+                target_params = {}
+                # First choose num_linear_layers to use in later loops
+                target_params["num_linear_layers"] = trial.suggest_int(
+                    f"num_linear_layers_{target}",
+                    parameters["num_linear_layers"][0],
+                    parameters["num_linear_layers"][1],
+                )
+                num_layers = target_params["num_linear_layers"]
+                max_dim = max(768, train_dataset.vocab_sizes[config.targets.index(target)] )
+                min_dim = min (32, train_dataset.vocab_sizes[config.targets.index(target)])
+                target_params["linear_layers_dim"]  = sorted([
+                    trial.suggest_int(f"layer_dim_{target}_{i}", min_dim, max_dim)
+                    for i in range(num_layers)
+                ], reverse= True)
+                # Activation function per layer
+                target_params["activation_fn"] = [
+                    trial.suggest_categorical(f"activation_fn_{target}_{i}", parameters["activation_fn"])
+                    for i in range(num_layers)
+                ]
+                # Dropout per layer
+                target_params["pooler_dropout"] = sorted([
+                    trial.suggest_int(f"pooler_dropout_{target}_{i}", parameters["pooler_dropout"][0], parameters["pooler_dropout"][1])
+                    for i in range(num_layers)
+                ], reverse = True)
+                target_params["normalisation"] = [
+                    trial.suggest_categorical(f"normalisation_{target}_{i}", parameters["normalisation"])
+                    for i in range(num_layers)
+                ]
+                hyperparams_dict[target] = target_params
+            # Reload config and training_kwargs
+            config.freeze_layers = trial.suggest_int(f"freeze_layers", 6, 11)
+            config.batch_size = trial.suggest_int(f"batch_size", 2, 8, step = 2)
+            config.learning_rate = trial.suggest_float("learning_rate", 1e-5, 1e-3, log = True)
+        else:
+            with open("best_summary.json") as f:
+                best_params_dict = json.load(f)
+                hyperparams_dict  = get_best_params_from_dict(best_params_dict, "inversion")
+                
         long_degree = "primary_alteration_primary_degree_secondary_alteration_secondary_degree"
         hyperparams_df = pd.DataFrame.from_dict(hyperparams_dict).T
         hyperparams_df.rename(index = {long_degree: "degree"}, inplace=True)
@@ -291,8 +319,8 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
             logging_dir= config.log_dir,
             max_steps= config.max_steps,
             eval_strategy= "steps",
-            eval_steps= eval_steps,   #for full 1000
-            save_steps = eval_steps,  #for full 1000
+            eval_steps= eval_steps,   
+            save_steps = eval_steps,  
             load_best_model_at_end = True,
             metric_for_best_model= "accuracy",
             greater_is_better= True,
@@ -315,7 +343,13 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
         if config.wandb_name:
             params_to_log = ["freeze_layers", "batch_size", "learning_rate"]
             hyperparams_dict.update( { key:getattr(config, key)  for key in params_to_log if hasattr(config, key)})
-            wandb.init(project="musicbert", name=f"trial_{trial.number}", group= config.wandb_name, config=hyperparams_dict, reinit= True)
+            if config.RUN_NAS:
+                name = f"trial_{trial.number}"
+                group= config.wandb_name
+            else:
+                name = config.wandb_name
+                group = None
+            wandb.init(project="musicbert", name=name, group=group, config=hyperparams_dict, reinit= True)
         trainer = Trainer(
             model=model,
             args=training_args,
@@ -336,6 +370,15 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
         return eval_result["eval_accuracy"] 
     return objective
 
+def train_model(hyperparams_dict):
+    long_degree = "primary_alteration_primary_degree_secondary_alteration_secondary_degree"
+    hyperparams_df = pd.DataFrame.from_dict(hyperparams_dict).T
+    hyperparams_df.rename(index = {long_degree: "degree"}, inplace=True)
+    print("Chosen hyperparameters")
+    print(hyperparams_df)
+
+    
+
 if __name__ == "__main__":
    
     print("start")
@@ -353,6 +396,8 @@ if __name__ == "__main__":
         valid_dataset = LimitedDataset(valid_dataset, limit=20)
         test_dataset = LimitedDataset(test_dataset, limit=20)
     #"""
+    if config_params.RUN_NAS:
+            config_params.num_trials = 1
     study = optuna.create_study(direction="maximize")
     study.optimize(make_objective(config_params, train_dataset, valid_dataset, test_dataset), n_trials=config_params.num_trials)
     best_trial = study.best_trial
@@ -360,9 +405,10 @@ if __name__ == "__main__":
     **study.best_trial.params,
     "accuracy": study.best_trial.value
     }
-    with open ("best_summary.json", "w") as f:
-        json.dump(best_summary, f, indent = 4)
-    print("Best hyperparameters:", study.best_params)
+    if config_params.RUN_NAS:
+        with open ("best_summary.json", "w") as f:
+            json.dump(best_summary, f, indent = 4)
+        print("Best hyperparameters:", study.best_params)
     """
     print("evaluating the model from hf")
     with open('best_summary.json') as json_file:

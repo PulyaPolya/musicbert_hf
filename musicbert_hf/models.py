@@ -338,7 +338,7 @@ class RobertaSequenceTaggingHead(nn.Module):
         layers = []
         layers.append(nn.Sequential(
             nn.Linear(input_dim, linear_layers_dim[0]),
-            nn.Dropout(p=pooler_dropout[0] /10),
+            nn.Dropout(p=pooler_dropout[0]),
             self.activation_function_mapping[activation_fns[0]]
             #self.activation_fn,
         ))
@@ -423,7 +423,8 @@ class MusicBertTokenClassification(BertPreTrainedModel):
         )
         param_dict = config.hyperparams
        # if len(config.targets) > 1:
-        target_params = next(iter(param_dict.values())) # TODO: change for the multitask case
+        target_params = next(iter(param_dict.values())) # 
+        #target_params = param_dict[config.targets[0]]   # TODO: change for the multitask case
         #else:
         #    target_params = param_dict.copy()
         # self.dropout = nn.Dropout(classifier_dropout)

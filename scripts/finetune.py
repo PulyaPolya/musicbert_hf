@@ -42,6 +42,9 @@ from transformers import Trainer, TrainingArguments
 import optuna
 import json
 import os
+import torch
+import numpy as np
+import random
 import pandas as pd
 from transformers import EarlyStoppingCallback
 from torch.utils.data import Subset
@@ -57,7 +60,15 @@ from musicbert_hf.data import HDF5Dataset, collate_for_musicbert_fn
 from musicbert_hf.metrics import compute_metrics, compute_metrics_multitask
 from musicbert_hf.models import freeze_layers, MusicBertTokenClassification, MusicBertMultiTaskTokenClassification
 
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
+    # For full reproducibility
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 class LimitedDataset:
     def __init__(self, base_dataset, limit):
@@ -95,6 +106,7 @@ class Config:
     max_steps: int = -1
     wandb_project: str | None = None
     wandb_name: str | None = None
+    optuna_name: str | None = None
     # If None, freeze all layers; if int, freeze all layers up to and including
     #   the specified layer; if sequence of ints, freeze the specified layers
     freeze_layers: int | Sequence[int] | None = None
@@ -211,9 +223,10 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
             os.environ.pop("WANDB_PROJECT", None)
         if config.RUN_NAS:
             hyperparams_dict = {}
-            parameters = {"num_linear_layers": [1, 5], "activation_fn": ["tanh", "relu", "gelu"],
-                        "pooler_dropout": [0,5], "normalisation" :  ["none", "layer"] }
+            parameters = {"num_linear_layers": [1, 6], "activation_fn": ["tanh", "relu", "gelu"],
+                        "pooler_dropout": [0.0, 0.5], "normalisation" :  ["none", "layer"] }
             for target in (config.targets):
+                MIN_LAYERS, MAX_LAYERS, = parameters["num_linear_layers"][0], parameters["num_linear_layers"][1]
                 target_params = {}
                 # First choose num_linear_layers to use in later loops
                 target_params["num_linear_layers"] = trial.suggest_int(
@@ -224,28 +237,27 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
                 num_layers = target_params["num_linear_layers"]
                 max_dim = max(768, train_dataset.vocab_sizes[config.targets.index(target)] )
                 min_dim = min (32, train_dataset.vocab_sizes[config.targets.index(target)])
-                target_params["linear_layers_dim"]  = sorted([
+                target_params["linear_layers_dim"]  = [
                     trial.suggest_int(f"layer_dim_{target}_{i}", min_dim, max_dim)
-                    for i in range(num_layers)
-                ], reverse= True)
+                    for i in range(MAX_LAYERS)
+                ][:num_layers]
                 # Activation function per layer
                 target_params["activation_fn"] = [
                     trial.suggest_categorical(f"activation_fn_{target}_{i}", parameters["activation_fn"])
-                    for i in range(num_layers)
-                ]
+                    for i in range(MAX_LAYERS)
+                ][:num_layers]
                 # Dropout per layer
-                target_params["pooler_dropout"] = sorted([
-                    trial.suggest_int(f"pooler_dropout_{target}_{i}", parameters["pooler_dropout"][0], parameters["pooler_dropout"][1])
-                    for i in range(num_layers)
-                ], reverse = True)
+                target_params["pooler_dropout"] = [
+                    trial.suggest_float(f"pooler_dropout_{target}_{i}", parameters["pooler_dropout"][0], parameters["pooler_dropout"][1])
+                    for i in range(MAX_LAYERS)
+                ][:num_layers]
                 target_params["normalisation"] = [
                     trial.suggest_categorical(f"normalisation_{target}_{i}", parameters["normalisation"])
-                    for i in range(num_layers)
-                ]
+                    for i in range(MAX_LAYERS)
+                ][:num_layers]
                 hyperparams_dict[target] = target_params
-            # Reload config and training_kwargs
             config.freeze_layers = trial.suggest_int(f"freeze_layers", 6, 11)
-            config.batch_size = trial.suggest_int(f"batch_size", 2, 8, step = 2)
+            #config.batch_size = 4 #trial.suggest_int(f"batch_size", 2, 8, step = 2)
             config.learning_rate = trial.suggest_float("learning_rate", 1e-5, 1e-3, log = True)
         else:
             with open("best_summary.json") as f:
@@ -305,7 +317,7 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
         if TESTING:
             config.max_steps = 10
             config.warmup_steps = 2
-        push_to_hub = False if TESTING else True
+        push_to_hub = True #False if TESTING else True
 
         # Update training kwargs with trial-specific parameters
         training_kwargs =(
@@ -324,11 +336,12 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
             load_best_model_at_end = True,
             metric_for_best_model= "accuracy",
             greater_is_better= True,
-            save_total_limit= 2,
+            save_total_limit= 1,
             save_strategy = "steps",
             push_to_hub= push_to_hub,
             hub_model_id = config.hf_repository,
             eval_on_start= False,
+            seed = 42
         )| training_kwargs
         )
 
@@ -364,10 +377,11 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
         trainer.train()
         print(f"evaluating the model")
         eval_result = trainer.evaluate()
-        wandb.log({"eval_accuracy": eval_result["eval_accuracy"]})
-        wandb.finish()
+        if config.wandb_name:
+            wandb.log({"eval_accuracy": eval_result["eval_accuracy"]})
+            wandb.finish()
 
-        return eval_result["eval_accuracy"] 
+        return eval_result["eval_accuracy"], eval_result["eval_precision"]
     return objective
 
 def train_model(hyperparams_dict):
@@ -380,7 +394,7 @@ def train_model(hyperparams_dict):
     
 
 if __name__ == "__main__":
-   
+    set_seed(42)
     print("start")
     with open("scripts/finetune_params.json") as f:
         config_dict = json.load(f)
@@ -396,25 +410,38 @@ if __name__ == "__main__":
         valid_dataset = LimitedDataset(valid_dataset, limit=20)
         test_dataset = LimitedDataset(test_dataset, limit=20)
     #"""
-    if config_params.RUN_NAS:
+    if not config_params.RUN_NAS:
             config_params.num_trials = 1
-    study = optuna.create_study(direction="maximize")
+    pruner = optuna.pruners.MedianPruner(n_warmup_steps=0)
+    sampler = optuna.samplers.TPESampler(seed=42, 
+                                         multivariate=True,
+                                         warn_independent_sampling=False)
+    study = optuna.create_study(study_name=config_params.optuna_name,
+                                directions= ["maximize", "maximize"],
+                                sampler = sampler,
+                                pruner = pruner,
+                                storage = "sqlite:///optuna.db",
+                                load_if_exists=True )
     study.optimize(make_objective(config_params, train_dataset, valid_dataset, test_dataset), n_trials=config_params.num_trials)
-    best_trial = study.best_trial
-    best_summary = {
-    **study.best_trial.params,
-    "accuracy": study.best_trial.value
-    }
     if config_params.RUN_NAS:
-        with open ("best_summary.json", "w") as f:
-            json.dump(best_summary, f, indent = 4)
-        print("Best hyperparameters:", study.best_params)
+        best_trials = study.best_trials
+        best_summaries = []
+        for trial in study.best_trials:
+            best_summaries.append( {
+            "trial_number": trial.number,
+            **trial.params,
+            "objectives": trial.values
+
+            })
+        
+        with open ("best_summaries.json", "w") as f:
+            json.dump(best_summaries, f, indent = 4)
+        #print("Best hyperparameters:", study.best_params)
     """
     print("evaluating the model from hf")
     with open('best_summary.json') as json_file:
         best_trial = json.load(json_file)
     
-    #best_trial = {'activation_fn': 'tanh', 'pooler_dropout': 0} 
     
     
     #tsest_dataset = LimitedDataset(test_dataset, limit=10)
@@ -423,7 +450,7 @@ if __name__ == "__main__":
                                                                                 # up-to-date model is loaded (polina)
     #config.hyperparams = best_trial
     #config_dict.update(best_trial) # best_trial.params
-    model = MusicBertTokenClassification.from_pretrained(config_dict["hf_repository"], config= config)
+    model = MusicBertTokenClassification.from_pretrained(config_dict["hf_repository"], config= config)   #config_dict["hf_repository"],
     
 
     model.config.multitask_label2id = train_dataset.stois

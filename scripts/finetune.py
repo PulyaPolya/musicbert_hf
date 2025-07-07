@@ -49,6 +49,7 @@ import pandas as pd
 from transformers import EarlyStoppingCallback
 from torch.utils.data import Subset
 import wandb
+from torch.utils.data import DataLoader
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from musicbert_hf.checkpoints import (
@@ -87,7 +88,7 @@ class LimitedDataset:
 
     def __len__(self):
         return min(self.limit, len(self.base_dataset))
-
+gpu = torch.cuda.is_available()
 @dataclass
 class Config:
     # data_dir should have train, valid, and test subdirectories
@@ -212,6 +213,18 @@ def get_best_params_from_dict(best_params_dict, target):   # if we want to run t
     hyperparams_dict[target] = target_params
     return hyperparams_dict
 
+def create_dataloader(config, split, batch_size=4, num_workers=4, dtype=None, device=None):
+    # Retrieve dataset from the config (you've already defined the get_dataset function)
+    dataset = get_dataset(config, split)
+    
+    # Create the DataLoader
+    dataloader = DataLoader(dataset, 
+                            batch_size=batch_size, 
+                            num_workers=num_workers, 
+                            shuffle=True,  # Set shuffle to True for training
+                            pin_memory=True)  # Set pin_memory to True for faster data transfer to GPU
+    return dataloader
+
 def make_objective(config, train_dataset, valid_dataset, test_dataset):
     def objective(trial):
     # Load original config from JSON
@@ -257,7 +270,6 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
                 ][:num_layers]
                 hyperparams_dict[target] = target_params
             config.freeze_layers = trial.suggest_int(f"freeze_layers", 6, 11)
-            #config.batch_size = 4 #trial.suggest_int(f"batch_size", 2, 8, step = 2)
             config.learning_rate = trial.suggest_float("learning_rate", 1e-5, 1e-3, log = True)
         else:
             with open("best_summary.json") as f:
@@ -313,13 +325,14 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
 
         freeze_layers(model, config.freeze_layers)
         summary(model)
-        eval_steps = 5 if TESTING else 1000
+        eval_steps = 5 if TESTING else max(500, int(1000/(config.batch_size/4)))
         if TESTING:
             config.max_steps = 10
             config.warmup_steps = 2
         push_to_hub = True #False if TESTING else True
 
         # Update training kwargs with trial-specific parameters
+        max_steps = int(config.max_steps/ (config.batch_size / 4)) # making sure that the number of training steps in total is the same
         training_kwargs =(
             dict(
             output_dir= config.output_dir,
@@ -329,10 +342,11 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
             learning_rate= config.learning_rate,
             warmup_steps= config.warmup_steps,
             logging_dir= config.log_dir,
-            max_steps= config.max_steps,
+            max_steps= max_steps,
             eval_strategy= "steps",
             eval_steps= eval_steps,   
-            save_steps = eval_steps,  
+            save_steps = eval_steps, 
+            fp16=gpu, 
             load_best_model_at_end = True,
             metric_for_best_model= "accuracy",
             greater_is_better= True,
@@ -380,8 +394,9 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
         if config.wandb_name:
             wandb.log({"eval_accuracy": eval_result["eval_accuracy"]})
             wandb.finish()
-
-        return eval_result["eval_accuracy"], eval_result["eval_precision"]
+        accuracies = [eval_result[f"eval_{target}_accuracy"] for target in config.targets]
+        return accuracies
+        #return eval_result["eval_accuracy"], eval_result["eval_precision"]
     return objective
 
 def train_model(hyperparams_dict):
@@ -403,9 +418,16 @@ if __name__ == "__main__":
     global TESTING  
     TESTING  = config_params.TESTING
     test_dataset = get_dataset(config_params, "test")    
-    train_dataset = get_dataset(config_params, "train")
-    valid_dataset = get_dataset(config_params, "valid")
+    
+    num_cpus = os.cpu_count()
+    num_workers = min(num_cpus// 2, 4)
+    print(f"num cpus is {num_cpus}")
+    train_dataloader = create_dataloader(config_params, "train",shuffle=True, batch_size=config_params.batch_size, num_workers=16)
+    valid_dataloader = create_dataloader(config_params, "valid", huffle=False,batch_size=config_params.batch_size, num_workers=16)
+
     if TESTING:
+        train_dataset = get_dataset(config_params, "train")
+        valid_dataset = get_dataset(config_params, "valid")
         train_dataset = LimitedDataset(train_dataset, limit=30)
         valid_dataset = LimitedDataset(valid_dataset, limit=20)
         test_dataset = LimitedDataset(test_dataset, limit=20)
@@ -422,7 +444,7 @@ if __name__ == "__main__":
                                 pruner = pruner,
                                 storage = "sqlite:///optuna.db",
                                 load_if_exists=True )
-    study.optimize(make_objective(config_params, train_dataset, valid_dataset, test_dataset), n_trials=config_params.num_trials)
+    study.optimize(make_objective(config_params, train_dataloader.dataset, valid_dataloader.dataset, test_dataset), n_trials=config_params.num_trials)
     if config_params.RUN_NAS:
         best_trials = study.best_trials
         best_summaries = []

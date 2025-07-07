@@ -348,7 +348,7 @@ class RobertaSequenceTaggingHead(nn.Module):
             old_dim = linear_layers_dim[i]
             norm_type = normalisation[i]
             activation_fn = self.activation_function_mapping[activation_fns[i + 1]]
-            dropout_prob = pooler_dropout[i + 1] / 10
+            dropout_prob = pooler_dropout[i + 1] 
             norm_layer = {
                 "batch": nn.BatchNorm1d(new_dim),
                 "layer": nn.LayerNorm(new_dim),

@@ -379,15 +379,6 @@ class RobertaSequenceTaggingHead(nn.Module):
         # TODO: (Malcolm 2023-09-05)
         # https://github.com/facebookresearch/fairseq/pull/1709/files#r381391530
         # Would it make sense to add layer_norm here just like in the RobertaLMHead?
-        """
-        x = self.dropout(features)
-        for layer in self.hidden_layers:
-            x = self.activation_fn(layer(x))
-            x = self.dropout(x)
-        x = self.out_proj(x)
-        return x
-        """
-        #x = features
         for layer in self.hidden_layers:
             x = layer(x)
         x = self.out_proj(x)
@@ -437,13 +428,6 @@ class MusicBertTokenClassification(BertPreTrainedModel):
             num_linear_layers=target_params["num_linear_layers"],
             normalisation = target_params["normalisation"],
             linear_layers_dim = target_params["linear_layers_dim"]
-            
-            #config = config
-            #activation_fn=config.classifier_activation,
-            #activation_fn=config.activation_fn,
-            #pooler_dropout=classifier_dropout,
-            #pooler_dropout=config.pooler_dropout,
-            #num_linear_layers = config.num_linear_layers
             
         )
         print(f"Selected head")

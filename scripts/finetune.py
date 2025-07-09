@@ -102,6 +102,7 @@ class Config:
     # architecture: Literal["base", "tiny"] = "base"
     num_epochs: int = 0
     batch_size: int = 4
+    num_workers: int = 4
     learning_rate: float = 2.5e-4
     warmup_steps: int = 0
     max_steps: int = -1
@@ -182,7 +183,6 @@ def get_config_and_training_kwargs(config_path=None):
         file_conf = OmegaConf.load(config_path)
     else:
         file_conf = OmegaConf.create()  
-    #conf = OmegaConf.from_cli(sys.argv[1:])
     cli_conf = OmegaConf.from_cli(sys.argv[1:])
     # Merge file config with command-line overrides, with CLI taking precedence
     conf = OmegaConf.merge(file_conf, cli_conf)
@@ -213,16 +213,14 @@ def get_best_params_from_dict(best_params_dict, target):   # if we want to run t
     hyperparams_dict[target] = target_params
     return hyperparams_dict
 
-def create_dataloader(config, split, batch_size=4, num_workers=4, dtype=None, device=None):
-    # Retrieve dataset from the config (you've already defined the get_dataset function)
+def create_dataloader(config, split, batch_size=4, num_workers=4, shuffle=True, dtype=None, device=None):
+
     dataset = get_dataset(config, split)
-    
-    # Create the DataLoader
     dataloader = DataLoader(dataset, 
                             batch_size=batch_size, 
                             num_workers=num_workers, 
-                            shuffle=True,  # Set shuffle to True for training
-                            pin_memory=True)  # Set pin_memory to True for faster data transfer to GPU
+                            shuffle=shuffle,  
+                            pin_memory=True)  
     return dataloader
 
 def make_objective(config, train_dataset, valid_dataset, test_dataset):
@@ -281,7 +279,7 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
         hyperparams_df.rename(index = {long_degree: "degree"}, inplace=True)
         print("Chosen hyperparameters")
         print(hyperparams_df)
-        print(f"number of frozen layers: {config.freeze_layers}, batch_size : {config.batch_size}, learning_rate: {config.learning_rate}")
+        print(f"number of frozen layers: {config.freeze_layers},  learning_rate: {config.learning_rate}")
         # Load model
         if not config.checkpoint_path:
             raise ValueError("checkpoint_path must be provided")
@@ -329,7 +327,7 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
         if TESTING:
             config.max_steps = 10
             config.warmup_steps = 2
-        push_to_hub = True #False if TESTING else True
+        push_to_hub = False #False if TESTING else True
 
         # Update training kwargs with trial-specific parameters
         max_steps = int(config.max_steps/ (config.batch_size / 4)) # making sure that the number of training steps in total is the same
@@ -365,8 +363,6 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
         compute_metrics_fn = partial(
             compute_metrics_multitask, task_names=config.targets
         ) if config.multitask else compute_metrics
-        print(f"starting with the model training")
-        print(f"max_steps {config.max_steps}")
         if config.wandb_name:
             params_to_log = ["freeze_layers", "batch_size", "learning_rate"]
             hyperparams_dict.update( { key:getattr(config, key)  for key in params_to_log if hasattr(config, key)})
@@ -385,7 +381,7 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
             eval_dataset=valid_dataset,
             compute_loss_func=partial(model.compute_loss),
             compute_metrics=compute_metrics_fn,
-            callbacks = [EarlyStoppingCallback(early_stopping_patience =4)]
+            callbacks = [EarlyStoppingCallback(early_stopping_patience =5)]
         )
 
         trainer.train()
@@ -396,7 +392,6 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
             wandb.finish()
         accuracies = [eval_result[f"eval_{target}_accuracy"] for target in config.targets]
         return accuracies
-        #return eval_result["eval_accuracy"], eval_result["eval_precision"]
     return objective
 
 def train_model(hyperparams_dict):
@@ -410,24 +405,19 @@ def train_model(hyperparams_dict):
 
 if __name__ == "__main__":
     set_seed(42)
-    print("start")
     with open("scripts/finetune_params.json") as f:
         config_dict = json.load(f)
     config_params = Config(**config_dict)
     os.environ["HF_TOKEN"] = config_params.hf_token
     global TESTING  
     TESTING  = config_params.TESTING
-    test_dataset = get_dataset(config_params, "test")    
-    
-    num_cpus = os.cpu_count()
-    num_workers = min(num_cpus// 2, 4)
-    print(f"num cpus is {num_cpus}")
-    train_dataloader = create_dataloader(config_params, "train",shuffle=True, batch_size=config_params.batch_size, num_workers=16)
-    valid_dataloader = create_dataloader(config_params, "valid", huffle=False,batch_size=config_params.batch_size, num_workers=16)
+    test_dataset = get_dataset(config_params, "test")   
+    train_dataloader = create_dataloader(config_params, "train",shuffle=True, batch_size=config_params.batch_size, num_workers =config_params.num_workers)
+    valid_dataloader = create_dataloader(config_params, "valid", shuffle=False,batch_size=config_params.batch_size, num_workers =config_params.num_workers)
 
     if TESTING:
         train_dataset = get_dataset(config_params, "train")
-        valid_dataset = get_dataset(config_params, "valid")
+        valid_dataset = get_dataset(config_params, "valid") 
         train_dataset = LimitedDataset(train_dataset, limit=30)
         valid_dataset = LimitedDataset(valid_dataset, limit=20)
         test_dataset = LimitedDataset(test_dataset, limit=20)
@@ -439,7 +429,8 @@ if __name__ == "__main__":
                                          multivariate=True,
                                          warn_independent_sampling=False)
     study = optuna.create_study(study_name=config_params.optuna_name,
-                                directions= ["maximize", "maximize"],
+                                # in case of 4 classification tasks
+                                directions= ["maximize", "maximize","maximize", "maximize"],
                                 sampler = sampler,
                                 pruner = pruner,
                                 storage = "sqlite:///optuna.db",
@@ -458,7 +449,7 @@ if __name__ == "__main__":
         
         with open ("best_summaries.json", "w") as f:
             json.dump(best_summaries, f, indent = 4)
-        #print("Best hyperparameters:", study.best_params)
+
     """
     print("evaluating the model from hf")
     with open('best_summary.json') as json_file:

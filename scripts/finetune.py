@@ -273,7 +273,7 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
             with open("best_summary.json") as f:
                 best_params_dict = json.load(f)
                 hyperparams_dict  = get_best_params_from_dict(best_params_dict, "inversion")
-                
+        
         long_degree = "primary_alteration_primary_degree_secondary_alteration_secondary_degree"
         hyperparams_df = pd.DataFrame.from_dict(hyperparams_dict).T
         hyperparams_df.rename(index = {long_degree: "degree"}, inplace=True)
@@ -283,7 +283,7 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
         # Load model
         if not config.checkpoint_path:
             raise ValueError("checkpoint_path must be provided")
-
+        print(hyperparams_dict)
         if config.multitask:
             if config.conditioning:
                 model = load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint(
@@ -337,7 +337,7 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
             num_train_epochs= config.num_epochs,
             per_device_train_batch_size= config.batch_size,
             per_device_eval_batch_size=config.batch_size,
-            learning_rate= config.learning_rate,
+            learning_rate= config.learning_rate,   # learning rate is 
             warmup_steps= config.warmup_steps,
             logging_dir= config.log_dir,
             max_steps= max_steps,
@@ -401,13 +401,128 @@ def train_model(hyperparams_dict):
     print("Chosen hyperparameters")
     print(hyperparams_df)
 
+def measure_avg_step_time(model, config, train_dataset, valid_dataset,
+                          batch_size, steps=50):
+    """
+    Create a short-lived Trainer that runs for `steps` steps and returns
+    the average time per step (forward+backward).
+    """
+    _, training_kwargs = get_config_and_training_kwargs(config_path= "scripts/finetune_params.json")
+    training_kwargs =(
+            dict(
+            output_dir= config.output_dir,
+            num_train_epochs= config.num_epochs,
+            per_device_train_batch_size= batch_size,
+            per_device_eval_batch_size=batch_size,
+            learning_rate= config.learning_rate,
+            warmup_steps= config.warmup_steps,
+            logging_dir= config.log_dir,
+            max_steps= steps,
+            evaluation_strategy="no", 
+            logging_strategy="no", 
+            #eval_steps= steps/10,   
+            #save_steps = steps/10, 
+            fp16=gpu, 
+            load_best_model_at_end = True,
+            metric_for_best_model= "accuracy",
+            greater_is_better= True,
+            save_total_limit= 1,
+            save_strategy = "no",
+            #push_to_hub= push_to_hub,
+            hub_model_id = config.hf_repository,
+            eval_on_start= False,
+            seed = 42
+        )| training_kwargs
+        )
+
+    
+    training_args = TrainingArguments(**training_kwargs)
+
+    compute_metrics_fn = partial(
+        compute_metrics_multitask, task_names=config.targets
+    ) if config.multitask else compute_metrics
+ 
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        data_collator=partial(collate_for_musicbert_fn, multitask=config.multitask),
+        train_dataset=train_dataset,
+        eval_dataset=valid_dataset,
+        compute_loss_func=partial(model.compute_loss),
+        compute_metrics=compute_metrics_fn,
+        
+    )
+
+    start = time.time()
+    trainer.train()
+    elapsed = time.time() - start
+
+    return elapsed / steps
+
+def sweep_configs(config,model,
+                  batch_sizes, num_workers_list, steps=50):
+    records = []
+    for bs in batch_sizes:
+        for nw in num_workers_list:
+            print(f"running for  batch_size={bs:<3d}  workers={nw:<2d}")
+            train_dataloader = create_dataloader(config_params, "train",shuffle=False, batch_size=bs, num_workers =nw)
+            valid_dataloader = create_dataloader(config_params, "valid",shuffle=False, batch_size=bs, num_workers =nw)
+
+            avg = measure_avg_step_time(model,
+                config,  train_dataloader.dataset,valid_dataloader.dataset,
+                batch_size=bs, steps=steps
+            )
+            print(f"batch_size={bs:<3d}  workers={nw:<2d}  avg_step={avg*1000:6.1f} ms")
+            records.append({
+                "batch_size": bs,
+                "num_workers": nw,
+                "avg_step_time_s": avg
+            })
+    return pd.DataFrame(records)
+
     
 
 if __name__ == "__main__":
+
+
+
+
+    hyperparams_dict = {'quality': {'num_linear_layers': 3, 'linear_layers_dim': [731, 566, 466], 'activation_fn': ['tanh', 'relu', 'tanh'], 'pooler_dropout': [0.3925879806965068, 0.09983689107917987, 0.2571172192068058], 'normalisation': ['none', 'layer', 'none']}, 'inversion': {'num_linear_layers': 6, 'linear_layers_dim': [204, 512, 245, 403, 424, 148], 'activation_fn': ['tanh', 'gelu', 'relu', 'relu', 'tanh', 'gelu'], 'pooler_dropout': [0.03727532183988541, 0.49344346830025865, 0.3861223846483287, 0.0993578407670862, 0.0027610585618011996, 0.4077307142274171], 'normalisation': ['layer', 'none', 'none', 'none', 'none', 'layer']}, 'key_pc_mode': {'num_linear_layers': 5, 'linear_layers_dim': [500, 685, 377, 116, 556], 'activation_fn': ['relu', 'tanh', 'gelu', 'gelu', 'gelu'], 'pooler_dropout': [0.08061064362700221, 0.46484882617128653, 0.4040601897822085, 0.31670187825521173, 0.43573029509385885], 'normalisation': ['layer', 'layer', 'none', 'layer', 'layer']}, 'primary_alteration_primary_degree_secondary_alteration_secondary_degree': {'num_linear_layers': 4, 'linear_layers_dim': [339, 195, 120, 280], 'activation_fn': ['relu', 'tanh', 'tanh', 'relu'], 'pooler_dropout': [0.49282522705530035, 0.1210276357557502, 0.3360677737029393, 0.3808098076643588], 'normalisation': ['layer', 'none', 'layer', 'none']}}
+
+
+
+
+
+
+
+
     set_seed(42)
     with open("scripts/finetune_params.json") as f:
         config_dict = json.load(f)
     config_params = Config(**config_dict)
+    
+    model = load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
+                    hyperparams_dict,
+                    config_params.checkpoint_path,
+                    checkpoint_type="musicbert",
+                    num_labels=[15, 8, 28, 185]
+                )
+    freeze_layers(model, 9)
+    batch_sizes       = [4, 8, 16, 32]
+    num_workers_list  = [4, 8, 12, 16]
+    steps             = 80
+
+    # 3) Run the sweep:
+    df = sweep_configs(config_params, model,
+        batch_sizes, num_workers_list, steps=steps
+    )
+
+    # 4) Save or display the results:
+    print("\nAll results:")
+    print(df)
+    df.to_csv("hf_trainer_benchmark.csv", index=False)
+
+    
     os.environ["HF_TOKEN"] = config_params.hf_token
     global TESTING  
     TESTING  = config_params.TESTING

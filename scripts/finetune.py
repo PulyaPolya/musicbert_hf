@@ -43,6 +43,7 @@ import optuna
 import json
 import os
 import torch
+from math import ceil
 import numpy as np
 import random
 import pandas as pd
@@ -170,10 +171,13 @@ class Config:
 
 def get_dataset(config, split):
     data_dir = getattr(config, f"{split}_dir")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"loading to device {device}")
     dataset = HDF5Dataset(
         os.path.join(data_dir, "events.h5"),
         config.target_paths(split),
         conditioning_path=config.conditioning_path(split),
+        device = device
     )
     return dataset
 
@@ -227,12 +231,15 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
     def objective(trial):
     # Load original config from JSON
         _, training_kwargs = get_config_and_training_kwargs(config_path= "scripts/finetune_params.json")
-
+        
         if config.wandb_project:
             os.environ["WANDB_PROJECT"] = config.wandb_project
         else:
             os.environ.pop("WANDB_PROJECT", None)
+        
+        
         if config.RUN_NAS:
+            seed = 42
             hyperparams_dict = {}
             parameters = {"num_linear_layers": [1, 6], "activation_fn": ["tanh", "relu", "gelu"],
                         "pooler_dropout": [0.0, 0.5], "normalisation" :  ["none", "layer"] }
@@ -269,17 +276,19 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
                 hyperparams_dict[target] = target_params
             config.freeze_layers = trial.suggest_int(f"freeze_layers", 6, 11)
             config.learning_rate = trial.suggest_float("learning_rate", 1e-5, 1e-3, log = True)
+            config.batch_size = 64# trial.suggest_categorical("batch_size",[4, 8, 16, 32, 64])
         else:
             with open("best_summary.json") as f:
                 best_params_dict = json.load(f)
                 hyperparams_dict  = get_best_params_from_dict(best_params_dict, "inversion")
-                
+                seed = random.randint(0, 2**31-1)
+        set_seed(seed)  
         long_degree = "primary_alteration_primary_degree_secondary_alteration_secondary_degree"
         hyperparams_df = pd.DataFrame.from_dict(hyperparams_dict).T
         hyperparams_df.rename(index = {long_degree: "degree"}, inplace=True)
         print("Chosen hyperparameters")
         print(hyperparams_df)
-        print(f"number of frozen layers: {config.freeze_layers},  learning_rate: {config.learning_rate}")
+        print(f"number of frozen layers: {config.freeze_layers},  learning_rate: {config.learning_rate}, batch_size {config.batch_size}")
         # Load model
         if not config.checkpoint_path:
             raise ValueError("checkpoint_path must be provided")
@@ -323,14 +332,22 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
 
         freeze_layers(model, config.freeze_layers)
         summary(model)
-        eval_steps = 5 if TESTING else max(500, int(1000/(config.batch_size/4)))
+        eval_steps = 5 if TESTING else 1000
+        #evals_per_epoch = 25
+
+        # how many updates in one epoch for this batch size?
+        #steps_per_epoch = ceil(len(train_dataset) / config.batch_size)
+
+        # then space your evaluations evenly:
+        #eval_steps = ceil(steps_per_epoch / evals_per_epoch)
         if TESTING:
             config.max_steps = 10
             config.warmup_steps = 2
         push_to_hub = False #False if TESTING else True
 
         # Update training kwargs with trial-specific parameters
-        max_steps = int(config.max_steps/ (config.batch_size / 4)) # making sure that the number of training steps in total is the same
+        #max_steps = int(config.max_steps/ (config.batch_size / 4)) # making sure that the number of training steps in total is the same
+        
         training_kwargs =(
             dict(
             output_dir= config.output_dir,
@@ -340,11 +357,11 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
             learning_rate= config.learning_rate,
             warmup_steps= config.warmup_steps,
             logging_dir= config.log_dir,
-            max_steps= max_steps,
             eval_strategy= "steps",
             eval_steps= eval_steps,   
             save_steps = eval_steps, 
             fp16=gpu, 
+            max_steps = config.max_steps,
             load_best_model_at_end = True,
             metric_for_best_model= "accuracy",
             greater_is_better= True,
@@ -383,12 +400,14 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
             compute_metrics=compute_metrics_fn,
             callbacks = [EarlyStoppingCallback(early_stopping_patience =5)]
         )
-
+        print(model.device)
         trainer.train()
         print(f"evaluating the model")
         eval_result = trainer.evaluate()
         if config.wandb_name:
-            wandb.log({"eval_accuracy": eval_result["eval_accuracy"]})
+            wandb.log({"eval_accuracy": eval_result["eval_accuracy"],
+                       "seed":seed
+                       })
             wandb.finish()
         accuracies = [eval_result[f"eval_{target}_accuracy"] for target in config.targets]
         return accuracies
@@ -404,7 +423,6 @@ def train_model(hyperparams_dict):
     
 
 if __name__ == "__main__":
-    set_seed(42)
     with open("scripts/finetune_params.json") as f:
         config_dict = json.load(f)
     config_params = Config(**config_dict)
@@ -433,9 +451,9 @@ if __name__ == "__main__":
                                 directions= ["maximize", "maximize","maximize", "maximize"],
                                 sampler = sampler,
                                 pruner = pruner,
-                                storage = "sqlite:///optuna.db",
+                                #storage = "sqlite:///optuna.db",
                                 load_if_exists=True )
-    study.optimize(make_objective(config_params, train_dataloader.dataset, valid_dataloader.dataset, test_dataset), n_trials=config_params.num_trials)
+    study.optimize(make_objective(config_params, train_dataloader.dataset, valid_dataloader.dataset, test_dataset), n_trials=config_params.num_trials, timeout = 10800)
     if config_params.RUN_NAS:
         best_trials = study.best_trials
         best_summaries = []

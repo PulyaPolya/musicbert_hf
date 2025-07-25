@@ -276,7 +276,7 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
                 hyperparams_dict[target] = target_params
             config.freeze_layers = trial.suggest_int(f"freeze_layers", 6, 11)
             config.learning_rate = trial.suggest_float("learning_rate", 1e-5, 1e-3, log = True)
-            config.batch_size = 64# trial.suggest_categorical("batch_size",[4, 8, 16, 32, 64])
+            config.batch_size =  trial.suggest_categorical("batch_size",[4, 8, 16, 32])
         else:
             with open("best_summary.json") as f:
                 best_params_dict = json.load(f)
@@ -429,13 +429,15 @@ if __name__ == "__main__":
     os.environ["HF_TOKEN"] = config_params.hf_token
     global TESTING  
     TESTING  = config_params.TESTING
-    test_dataset = get_dataset(config_params, "test")   
-    train_dataloader = create_dataloader(config_params, "train",shuffle=True, batch_size=config_params.batch_size, num_workers =config_params.num_workers)
-    valid_dataloader = create_dataloader(config_params, "valid", shuffle=False,batch_size=config_params.batch_size, num_workers =config_params.num_workers)
+    test_dataset = get_dataset(config_params, "test") 
+    train_dataset = get_dataset(config_params, "train")
+    valid_dataset = get_dataset(config_params, "valid")  
+    #train_dataloader = create_dataloader(config_params, "train",shuffle=True, batch_size=config_params.batch_size, num_workers =config_params.num_workers)
+    #valid_dataloader = create_dataloader(config_params, "valid", shuffle=False,batch_size=config_params.batch_size, num_workers =config_params.num_workers)
 
     if TESTING:
-        train_dataset = get_dataset(config_params, "train")
-        valid_dataset = get_dataset(config_params, "valid") 
+        #train_dataset = get_dataset(config_params, "train")
+        #valid_dataset = get_dataset(config_params, "valid") 
         train_dataset = LimitedDataset(train_dataset, limit=30)
         valid_dataset = LimitedDataset(valid_dataset, limit=20)
         test_dataset = LimitedDataset(test_dataset, limit=20)
@@ -451,9 +453,10 @@ if __name__ == "__main__":
                                 directions= ["maximize", "maximize","maximize", "maximize"],
                                 sampler = sampler,
                                 pruner = pruner,
-                                #storage = "sqlite:///optuna.db",
+                                storage = "sqlite:///optuna.db",
                                 load_if_exists=True )
-    study.optimize(make_objective(config_params, train_dataloader.dataset, valid_dataloader.dataset, test_dataset), n_trials=config_params.num_trials, timeout = 10800)
+    # adding 2.5 h time limit
+    study.optimize(make_objective(config_params, train_dataset, valid_dataset, test_dataset), n_trials=config_params.num_trials, timeout = 9000)
     if config_params.RUN_NAS:
         best_trials = study.best_trials
         best_summaries = []

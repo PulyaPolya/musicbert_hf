@@ -61,6 +61,15 @@ from musicbert_hf.checkpoints import (
 from musicbert_hf.data import HDF5Dataset, collate_for_musicbert_fn
 from musicbert_hf.metrics import compute_metrics, compute_metrics_multitask
 from musicbert_hf.models import freeze_layers, MusicBertTokenClassification, MusicBertMultiTaskTokenClassification
+from optuna.pruners import MedianPruner, BasePruner
+
+import signal
+
+class TrialTimeout(Exception):
+    pass
+
+def alarm_handler(signum, frame):
+    raise TrialTimeout()
 
 def set_seed(seed=42):
     random.seed(seed)
@@ -276,7 +285,7 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
                 hyperparams_dict[target] = target_params
             config.freeze_layers = trial.suggest_int(f"freeze_layers", 6, 11)
             config.learning_rate = trial.suggest_float("learning_rate", 1e-5, 1e-3, log = True)
-            config.batch_size =  trial.suggest_categorical("batch_size",[4, 8, 16, 32])
+            config.batch_size = 4 #trial.suggest_categorical("batch_size",[4, 8, 16, 32])
         else:
             with open("best_summary.json") as f:
                 best_params_dict = json.load(f)
@@ -332,7 +341,8 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
 
         freeze_layers(model, config.freeze_layers)
         summary(model)
-        eval_steps = 5 if TESTING else 1000
+        # originally evaluate every 1000 steps, adjust for different batch sizes
+        eval_steps = 5 if TESTING else max(4000 // config.batch_size, 400)
         #evals_per_epoch = 25
 
         # how many updates in one epoch for this batch size?
@@ -343,6 +353,7 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
         if TESTING:
             config.max_steps = 10
             config.warmup_steps = 2
+            config.batch_size = 4
         push_to_hub = False #False if TESTING else True
 
         # Update training kwargs with trial-specific parameters
@@ -401,7 +412,17 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
             callbacks = [EarlyStoppingCallback(early_stopping_patience =5)]
         )
         print(model.device)
-        trainer.train()
+        print(f"trial{trial.number} before")
+        print("Model hash before training:", hash(tuple(p.data_ptr() for p in model.parameters())))
+        per_trial_timeout_seconds = 120
+        signal.signal(signal.SIGALRM, alarm_handler)
+        signal.alarm(per_trial_timeout_seconds) 
+        try :
+            trainer.train()
+        except TrialTimeout:
+            raise optuna.TrialPruned()
+        finally:
+            signal.alarm(0)
         print(f"evaluating the model")
         eval_result = trainer.evaluate()
         if config.wandb_name:
@@ -444,7 +465,9 @@ if __name__ == "__main__":
     #"""
     if not config_params.RUN_NAS:
             config_params.num_trials = 1
-    pruner = optuna.pruners.MedianPruner(n_warmup_steps=0)
+    median_pruner = optuna.pruners.MedianPruner(n_warmup_steps=0)
+    
+    
     sampler = optuna.samplers.TPESampler(seed=42, 
                                          multivariate=True,
                                          warn_independent_sampling=False)
@@ -452,8 +475,8 @@ if __name__ == "__main__":
                                 # in case of 4 classification tasks
                                 directions= ["maximize", "maximize","maximize", "maximize"],
                                 sampler = sampler,
-                                pruner = pruner,
-                                storage = "sqlite:///optuna.db",
+                                pruner = median_pruner,
+                                #storage = "sqlite:///optuna.db",
                                 load_if_exists=True )
     # adding 2.5 h time limit
     study.optimize(make_objective(config_params, train_dataset, valid_dataset, test_dataset), n_trials=config_params.num_trials, timeout = 9000)

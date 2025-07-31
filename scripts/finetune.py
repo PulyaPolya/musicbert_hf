@@ -119,6 +119,8 @@ class Config:
     wandb_project: str | None = None
     wandb_name: str | None = None
     optuna_name: str | None = None
+    # time limit for each trial in the optuna run
+    time_limit : str | None = None
     # If None, freeze all layers; if int, freeze all layers up to and including
     #   the specified layer; if sequence of ints, freeze the specified layers
     freeze_layers: int | Sequence[int] | None = None
@@ -236,7 +238,7 @@ def create_dataloader(config, split, batch_size=4, num_workers=4, shuffle=True, 
                             pin_memory=True)  
     return dataloader
 
-def make_objective(config, train_dataset, valid_dataset, test_dataset):
+def make_objective(config, train_dataset, valid_dataset, test_dataset, time_limit):
     def objective(trial):
     # Load original config from JSON
         _, training_kwargs = get_config_and_training_kwargs(config_path= "scripts/finetune_params.json")
@@ -414,9 +416,8 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset):
         print(model.device)
         print(f"trial{trial.number} before")
         print("Model hash before training:", hash(tuple(p.data_ptr() for p in model.parameters())))
-        per_trial_timeout_seconds = 120
         signal.signal(signal.SIGALRM, alarm_handler)
-        signal.alarm(per_trial_timeout_seconds) 
+        signal.alarm(time_limit*60)  # converting minutes to seconds
         try :
             trainer.train()
         except TrialTimeout:
@@ -479,7 +480,7 @@ if __name__ == "__main__":
                                 #storage = "sqlite:///optuna.db",
                                 load_if_exists=True )
     # adding 2.5 h time limit
-    study.optimize(make_objective(config_params, train_dataset, valid_dataset, test_dataset), n_trials=config_params.num_trials, timeout = 9000)
+    study.optimize(make_objective(config_params, train_dataset, valid_dataset, test_dataset, time_limit=config_params.time_limit), n_trials=config_params.num_trials)
     if config_params.RUN_NAS:
         best_trials = study.best_trials
         best_summaries = []

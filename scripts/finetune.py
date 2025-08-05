@@ -248,12 +248,11 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset, time_limi
         else:
             os.environ.pop("WANDB_PROJECT", None)
         
-        
         if config.RUN_NAS:
             seed = 42
             hyperparams_dict = {}
             parameters = {"num_linear_layers": [1, 6], "activation_fn": ["tanh", "relu", "gelu"],
-                        "pooler_dropout": [0.0, 0.5], "normalisation" :  ["none", "layer"] }
+                        "pooler_dropout": [0.0, 0.5], "normalisation" :  ["none", "layer"], "linear_layers_dim":[32, 768] }
             for target in (config.targets):
                 MIN_LAYERS, MAX_LAYERS, = parameters["num_linear_layers"][0], parameters["num_linear_layers"][1]
                 target_params = {}
@@ -264,10 +263,10 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset, time_limi
                     parameters["num_linear_layers"][1],
                 )
                 num_layers = target_params["num_linear_layers"]
-                max_dim = max(768, train_dataset.vocab_sizes[config.targets.index(target)] )
-                min_dim = min (32, train_dataset.vocab_sizes[config.targets.index(target)])
+                #max_dim = max(768, train_dataset.vocab_sizes[config.targets.index(target)] )
+                #min_dim = min (32, train_dataset.vocab_sizes[config.targets.index(target)])
                 target_params["linear_layers_dim"]  = [
-                    trial.suggest_int(f"layer_dim_{target}_{i}", min_dim, max_dim)
+                    trial.suggest_int(f"layer_dim_{target}_{i}", parameters["linear_layers_dim"][0], parameters["linear_layers_dim"][1])
                     for i in range(MAX_LAYERS)
                 ][:num_layers]
                 # Activation function per layer
@@ -287,7 +286,7 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset, time_limi
                 hyperparams_dict[target] = target_params
             config.freeze_layers = trial.suggest_int(f"freeze_layers", 6, 11)
             config.learning_rate = trial.suggest_float("learning_rate", 1e-5, 1e-3, log = True)
-            config.batch_size = 4 #trial.suggest_categorical("batch_size",[4, 8, 16, 32])
+            config.batch_size =trial.suggest_categorical("batch_size",[4, 8, 16, 32])
         else:
             with open("best_summary.json") as f:
                 best_params_dict = json.load(f)
@@ -344,7 +343,7 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset, time_limi
         freeze_layers(model, config.freeze_layers)
         summary(model)
         # originally evaluate every 1000 steps, adjust for different batch sizes
-        eval_steps = 5 if TESTING else max(4000 // config.batch_size, 400)
+        eval_steps = 5 if TESTING else max(4000 // config.batch_size, 200)
         #evals_per_epoch = 25
 
         # how many updates in one epoch for this batch size?
@@ -378,12 +377,12 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset, time_limi
             load_best_model_at_end = True,
             metric_for_best_model= "accuracy",
             greater_is_better= True,
-            save_total_limit= 1,
+            save_total_limit= 2,
             save_strategy = "steps",
             push_to_hub= push_to_hub,
             hub_model_id = config.hf_repository,
             eval_on_start= False,
-            seed = 42
+            seed = seed
         )| training_kwargs
         )
 
@@ -414,8 +413,8 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset, time_limi
             callbacks = [EarlyStoppingCallback(early_stopping_patience =5)]
         )
         print(model.device)
-        print(f"trial{trial.number} before")
-        print("Model hash before training:", hash(tuple(p.data_ptr() for p in model.parameters())))
+        #print(f"trial{trial.number} before")
+        #print("Model hash before training:", hash(tuple(p.data_ptr() for p in model.parameters())))
         signal.signal(signal.SIGALRM, alarm_handler)
         signal.alarm(time_limit*60)  # converting minutes to seconds
         try :
@@ -424,25 +423,16 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset, time_limi
             raise optuna.TrialPruned()
         finally:
             signal.alarm(0)
-        print(f"evaluating the model")
-        eval_result = trainer.evaluate()
-        if config.wandb_name:
-            wandb.log({"eval_accuracy": eval_result["eval_accuracy"],
-                       "seed":seed
-                       })
-            wandb.finish()
-        accuracies = [eval_result[f"eval_{target}_accuracy"] for target in config.targets]
-        return accuracies
-    return objective
-
-def train_model(hyperparams_dict):
-    long_degree = "primary_alteration_primary_degree_secondary_alteration_secondary_degree"
-    hyperparams_df = pd.DataFrame.from_dict(hyperparams_dict).T
-    hyperparams_df.rename(index = {long_degree: "degree"}, inplace=True)
-    print("Chosen hyperparameters")
-    print(hyperparams_df)
-
-    
+            print(f"evaluating the model")
+            eval_result = trainer.evaluate()
+            if config.wandb_name:
+                accuracies = [eval_result[f"eval_{target}_accuracy"] for target in config.targets]
+                wandb.log({f"eval_{target}_accuracy": eval_result[f"eval_{target}_accuracy"],
+                        "seed":seed
+                        })
+                wandb.finish()
+            return accuracies
+    return objective    
 
 if __name__ == "__main__":
     with open("scripts/finetune_params.json") as f:
@@ -467,8 +457,6 @@ if __name__ == "__main__":
     if not config_params.RUN_NAS:
             config_params.num_trials = 1
     median_pruner = optuna.pruners.MedianPruner(n_warmup_steps=0)
-    
-    
     sampler = optuna.samplers.TPESampler(seed=42, 
                                          multivariate=True,
                                          warn_independent_sampling=False)
@@ -477,7 +465,7 @@ if __name__ == "__main__":
                                 directions= ["maximize", "maximize","maximize", "maximize"],
                                 sampler = sampler,
                                 pruner = median_pruner,
-                                #storage = "sqlite:///optuna.db",
+                                storage = "sqlite:///optuna.db",
                                 load_if_exists=True )
     # adding 2.5 h time limit
     study.optimize(make_objective(config_params, train_dataset, valid_dataset, test_dataset, time_limit=config_params.time_limit), n_trials=config_params.num_trials)

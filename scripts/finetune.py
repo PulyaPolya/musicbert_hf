@@ -51,6 +51,7 @@ from transformers import EarlyStoppingCallback
 from torch.utils.data import Subset
 import wandb
 from torch.utils.data import DataLoader
+import pickle
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from musicbert_hf.checkpoints import (
@@ -120,7 +121,7 @@ class Config:
     wandb_name: str | None = None
     optuna_name: str | None = None
     # time limit for each trial in the optuna run
-    time_limit : str | None = None
+    time_limit : int | None = None
     # If None, freeze all layers; if int, freeze all layers up to and including
     #   the specified layer; if sequence of ints, freeze the specified layers
     freeze_layers: int | Sequence[int] | None = None
@@ -132,6 +133,11 @@ class Config:
     TESTING: bool = True
     RUN_NAS : bool = False
     num_trials: int = 1
+    # for the cases when we want to continue NAS after stopping
+    # we need to save the sampler as pickle 
+    sampler_path: str | None = None
+    # setting seed for reproducability
+    seed : int | None = None
 
     def __post_init__(self):
         assert self.num_epochs is not None or self.max_steps is not None, (
@@ -249,7 +255,7 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset, time_limi
             os.environ.pop("WANDB_PROJECT", None)
         
         if config.RUN_NAS:
-            seed = 42
+            #seed = 42
             hyperparams_dict = {}
             parameters = {"num_linear_layers": [1, 6], "activation_fn": ["tanh", "relu", "gelu"],
                         "pooler_dropout": [0.0, 0.5], "normalisation" :  ["none", "layer"], "linear_layers_dim":[32, 768] }
@@ -257,7 +263,7 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset, time_limi
                 MIN_LAYERS, MAX_LAYERS, = parameters["num_linear_layers"][0], parameters["num_linear_layers"][1]
                 target_params = {}
                 # First choose num_linear_layers to use in later loops
-                target_params["num_linear_layers"] = trial.suggest_int(
+                target_params["num_linear_layers"] =  trial.suggest_int(
                     f"num_linear_layers_{target}",
                     parameters["num_linear_layers"][0],
                     parameters["num_linear_layers"][1],
@@ -266,11 +272,11 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset, time_limi
                 #max_dim = max(768, train_dataset.vocab_sizes[config.targets.index(target)] )
                 #min_dim = min (32, train_dataset.vocab_sizes[config.targets.index(target)])
                 target_params["linear_layers_dim"]  = [
-                    trial.suggest_int(f"layer_dim_{target}_{i}", parameters["linear_layers_dim"][0], parameters["linear_layers_dim"][1])
+                   trial.suggest_int(f"layer_dim_{target}_{i}", parameters["linear_layers_dim"][0], parameters["linear_layers_dim"][1])
                     for i in range(MAX_LAYERS)
                 ][:num_layers]
                 # Activation function per layer
-                target_params["activation_fn"] = [
+                target_params["activation_fn"] = [ 
                     trial.suggest_categorical(f"activation_fn_{target}_{i}", parameters["activation_fn"])
                     for i in range(MAX_LAYERS)
                 ][:num_layers]
@@ -286,13 +292,13 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset, time_limi
                 hyperparams_dict[target] = target_params
             config.freeze_layers = trial.suggest_int(f"freeze_layers", 6, 11)
             config.learning_rate = trial.suggest_float("learning_rate", 1e-5, 1e-3, log = True)
-            config.batch_size =trial.suggest_categorical("batch_size",[4, 8, 16, 32])
+            config.batch_size =4# trial.suggest_categorical("batch_size",[4, 8, 16, 32])   #!!!!!!!!!
         else:
             with open("best_summary.json") as f:
                 best_params_dict = json.load(f)
                 hyperparams_dict  = get_best_params_from_dict(best_params_dict, "inversion")
-                seed = random.randint(0, 2**31-1)
-        set_seed(seed)  
+               # seed = random.randint(0, 2**31-1)
+        set_seed(config.seed)  
         long_degree = "primary_alteration_primary_degree_secondary_alteration_secondary_degree"
         hyperparams_df = pd.DataFrame.from_dict(hyperparams_dict).T
         hyperparams_df.rename(index = {long_degree: "degree"}, inplace=True)
@@ -352,7 +358,7 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset, time_limi
         # then space your evaluations evenly:
         #eval_steps = ceil(steps_per_epoch / evals_per_epoch)
         if TESTING:
-            config.max_steps = 10
+            config.max_steps = 5
             config.warmup_steps = 2
             config.batch_size = 4
         push_to_hub = False #False if TESTING else True
@@ -382,7 +388,7 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset, time_limi
             push_to_hub= push_to_hub,
             hub_model_id = config.hf_repository,
             eval_on_start= False,
-            seed = seed
+            seed = config.seed
         )| training_kwargs
         )
 
@@ -428,7 +434,7 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset, time_limi
             if config.wandb_name:
                 accuracies = [eval_result[f"eval_{target}_accuracy"] for target in config.targets]
                 wandb.log({f"eval_{target}_accuracy": eval_result[f"eval_{target}_accuracy"],
-                        "seed":seed
+                        "seed":config.seed
                         })
                 wandb.finish()
             return accuracies
@@ -439,6 +445,11 @@ if __name__ == "__main__":
         config_dict = json.load(f)
     config_params = Config(**config_dict)
     os.environ["HF_TOKEN"] = config_params.hf_token
+    if not config_params.seed:
+        seed = random.randint(0, 2**31-1)
+        config_params.seed = seed
+    set_seed(config_params.seed)
+        
     global TESTING  
     TESTING  = config_params.TESTING
     test_dataset = get_dataset(config_params, "test") 
@@ -450,14 +461,18 @@ if __name__ == "__main__":
     if TESTING:
         #train_dataset = get_dataset(config_params, "train")
         #valid_dataset = get_dataset(config_params, "valid") 
-        train_dataset = LimitedDataset(train_dataset, limit=30)
-        valid_dataset = LimitedDataset(valid_dataset, limit=20)
+        train_dataset = LimitedDataset(train_dataset, limit=10)
+        valid_dataset = LimitedDataset(valid_dataset, limit=10)
         test_dataset = LimitedDataset(test_dataset, limit=20)
     #"""
     if not config_params.RUN_NAS:
             config_params.num_trials = 1
     median_pruner = optuna.pruners.MedianPruner(n_warmup_steps=0)
-    sampler = optuna.samplers.TPESampler(seed=42, 
+   
+    if config_params.sampler_path:
+        sampler = pickle.load(open(config_params.sampler_path,  "rb"))
+    else:
+         sampler = optuna.samplers.TPESampler(seed=config_params.seed, 
                                          multivariate=True,
                                          warn_independent_sampling=False)
     study = optuna.create_study(study_name=config_params.optuna_name,

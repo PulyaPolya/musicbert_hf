@@ -292,7 +292,7 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset, time_limi
                 hyperparams_dict[target] = target_params
             config.freeze_layers = trial.suggest_int(f"freeze_layers", 6, 11)
             config.learning_rate = trial.suggest_float("learning_rate", 1e-5, 1e-3, log = True)
-            config.batch_size =4# trial.suggest_categorical("batch_size",[4, 8, 16, 32])   #!!!!!!!!!
+            config.batch_size = trial.suggest_categorical("batch_size",[4, 8, 16, 32])   #!!!!!!!!!
         else:
             with open("best_summary.json") as f:
                 best_params_dict = json.load(f)
@@ -349,14 +349,7 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset, time_limi
         freeze_layers(model, config.freeze_layers)
         summary(model)
         # originally evaluate every 1000 steps, adjust for different batch sizes
-        eval_steps = 5 if TESTING else max(4000 // config.batch_size, 200)
-        #evals_per_epoch = 25
-
-        # how many updates in one epoch for this batch size?
-        #steps_per_epoch = ceil(len(train_dataset) / config.batch_size)
-
-        # then space your evaluations evenly:
-        #eval_steps = ceil(steps_per_epoch / evals_per_epoch)
+        eval_steps = 5 if TESTING else 4000 // config.batch_size
         if TESTING:
             config.max_steps = 5
             config.warmup_steps = 2
@@ -419,8 +412,6 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset, time_limi
             callbacks = [EarlyStoppingCallback(early_stopping_patience =5)]
         )
         print(model.device)
-        #print(f"trial{trial.number} before")
-        #print("Model hash before training:", hash(tuple(p.data_ptr() for p in model.parameters())))
         signal.signal(signal.SIGALRM, alarm_handler)
         signal.alarm(time_limit*60)  # converting minutes to seconds
         try :
@@ -459,12 +450,9 @@ if __name__ == "__main__":
     #valid_dataloader = create_dataloader(config_params, "valid", shuffle=False,batch_size=config_params.batch_size, num_workers =config_params.num_workers)
 
     if TESTING:
-        #train_dataset = get_dataset(config_params, "train")
-        #valid_dataset = get_dataset(config_params, "valid") 
         train_dataset = LimitedDataset(train_dataset, limit=10)
         valid_dataset = LimitedDataset(valid_dataset, limit=10)
         test_dataset = LimitedDataset(test_dataset, limit=20)
-    #"""
     if not config_params.RUN_NAS:
             config_params.num_trials = 1
     median_pruner = optuna.pruners.MedianPruner(n_warmup_steps=0)
@@ -480,7 +468,7 @@ if __name__ == "__main__":
                                 directions= ["maximize", "maximize","maximize", "maximize"],
                                 sampler = sampler,
                                 pruner = median_pruner,
-                                storage = "sqlite:///optuna.db",
+                                storage = "sqlite:///optuna_nas.db",
                                 load_if_exists=True )
     # adding 2.5 h time limit
     study.optimize(make_objective(config_params, train_dataset, valid_dataset, test_dataset, time_limit=config_params.time_limit), n_trials=config_params.num_trials)

@@ -188,7 +188,7 @@ class Config:
 
 def get_dataset(config, split):
     data_dir = getattr(config, f"{split}_dir")
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cpu")
     print(f"loading to device {device}")
     dataset = HDF5Dataset(
         os.path.join(data_dir, "events.h5"),
@@ -376,12 +376,15 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset, time_limi
             load_best_model_at_end = True,
             metric_for_best_model= "accuracy",
             greater_is_better= True,
-            save_total_limit= 2,
+            save_total_limit= 1,
             save_strategy = "steps",
             push_to_hub= push_to_hub,
             hub_model_id = config.hf_repository,
             eval_on_start= False,
-            seed = config.seed
+            seed = config.seed,
+            dataloader_num_workers=config.num_workers,
+            dataloader_pin_memory = True,
+            dataloader_persistent_workers = True
         )| training_kwargs
         )
 
@@ -424,9 +427,13 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset, time_limi
             eval_result = trainer.evaluate()
             if config.wandb_name:
                 accuracies = [eval_result[f"eval_{target}_accuracy"] for target in config.targets]
-                wandb.log({f"eval_{target}_accuracy": eval_result[f"eval_{target}_accuracy"],
-                        "seed":config.seed
-                        })
+                # wandb.log({f"eval_{target}_accuracy": eval_result[f"eval_{target}_accuracy"],
+                #         "seed":config.seed
+                #         })
+                log_dict = {f"eval_{target}_accuracy": eval_result[f"eval_{target}_accuracy"] 
+                for target in config.targets}
+                log_dict["seed"] = config.seed
+                wandb.log(log_dict)
                 wandb.finish()
             return accuracies
     return objective    

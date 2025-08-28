@@ -244,7 +244,7 @@ def create_dataloader(config, split, batch_size=4, num_workers=4, shuffle=True, 
                             pin_memory=True)  
     return dataloader
 
-def make_objective(config, train_dataset, valid_dataset, test_dataset, time_limit):
+def make_objective(config, train_dataset, valid_dataset, time_limit):
     def objective(trial):
     # Load original config from JSON
         _, training_kwargs = get_config_and_training_kwargs(config_path= "scripts/finetune_params.json")
@@ -290,7 +290,7 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset, time_limi
                     for i in range(MAX_LAYERS)
                 ][:num_layers]
                 hyperparams_dict[target] = target_params
-            config.freeze_layers = trial.suggest_int(f"freeze_layers", 6, 11)
+            config.freeze_layers = trial.suggest_int(f"freeze_layers", 0, 11)
             config.learning_rate = trial.suggest_float("learning_rate", 1e-5, 1e-3, log = True)
             config.batch_size = trial.suggest_categorical("batch_size",[4, 8, 16, 32])   #!!!!!!!!!
         else:
@@ -358,10 +358,11 @@ def make_objective(config, train_dataset, valid_dataset, test_dataset, time_limi
 
         # Update training kwargs with trial-specific parameters
         #max_steps = int(config.max_steps/ (config.batch_size / 4)) # making sure that the number of training steps in total is the same
-        
+        trial_dir = os.path.join(config.output_dir_base, config.optuna_name, f"trial_{trial.number:04d}")
+        os.makedirs(trial_dir, exist_ok=True)
         training_kwargs =(
             dict(
-            output_dir= config.output_dir,
+            output_dir= trial_dir,
             num_train_epochs= config.num_epochs,
             per_device_train_batch_size= config.batch_size,
             per_device_eval_batch_size=config.batch_size,
@@ -478,7 +479,9 @@ if __name__ == "__main__":
                                 storage = "sqlite:///optuna_nas.db",
                                 load_if_exists=True )
     # adding 2.5 h time limit
-    study.optimize(make_objective(config_params, train_dataset, valid_dataset, test_dataset, time_limit=config_params.time_limit), n_trials=config_params.num_trials)
+    study.optimize(make_objective(config_params, train_dataset, valid_dataset, time_limit=config_params.time_limit), n_trials=config_params.num_trials)
+    with open(f"sampler_{config_params.optuna_name}.pkl", "wb") as fout:
+        pickle.dump(study.sampler, fout)
     if config_params.RUN_NAS:
         best_trials = study.best_trials
         best_summaries = []

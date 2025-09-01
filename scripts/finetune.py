@@ -436,6 +436,8 @@ def make_objective(config, train_dataset, valid_dataset, time_limit):
                 log_dict["seed"] = config.seed
                 wandb.log(log_dict)
                 wandb.finish()
+            with open(f"sampler_{config.optuna_name}.pkl", "wb") as fout:
+                pickle.dump(trial.study.sampler, fout)
             return accuracies
     return objective    
 

@@ -37,6 +37,7 @@ from functools import partial
 from typing import Literal, Sequence
 from transformers import BertConfig
 from torchinfo import summary
+from pathlib import Path
 from omegaconf import OmegaConf
 from transformers import Trainer, TrainingArguments
 import optuna
@@ -243,6 +244,16 @@ def create_dataloader(config, split, batch_size=4, num_workers=4, shuffle=True, 
                             shuffle=shuffle,  
                             pin_memory=True)  
     return dataloader
+def save_sampler_callback(study, trial):
+    save_dir = Path("sampler")  
+    save_dir.mkdir(parents=True, exist_ok=True)
+    final_path = save_dir / f"sampler_{study.study_name}.pkl"
+    tmp_path = final_path.with_suffix(".tmp")
+
+    # atomic write to avoid partial/0-byte files
+    with open(tmp_path, "wb") as f:
+        pickle.dump(study.sampler, f)
+    os.replace(tmp_path, final_path)  # atomic on POSIX
 
 def make_objective(config, train_dataset, valid_dataset, time_limit):
     def objective(trial):
@@ -481,7 +492,7 @@ if __name__ == "__main__":
                                 storage = "sqlite:///optuna_nas.db",
                                 load_if_exists=True )
     # adding 2.5 h time limit
-    study.optimize(make_objective(config_params, train_dataset, valid_dataset, time_limit=config_params.time_limit), n_trials=config_params.num_trials)
+    study.optimize(make_objective(config_params, train_dataset, valid_dataset, time_limit=config_params.time_limit), n_trials=config_params.num_trials, callbacks=[save_sampler_callback])
     with open(f"sampler_{config_params.optuna_name}.pkl", "wb") as fout:
         pickle.dump(study.sampler, fout)
     if config_params.RUN_NAS:

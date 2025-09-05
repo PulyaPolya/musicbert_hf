@@ -470,12 +470,12 @@ if __name__ == "__main__":
     #train_dataloader = create_dataloader(config_params, "train",shuffle=True, batch_size=config_params.batch_size, num_workers =config_params.num_workers)
     #valid_dataloader = create_dataloader(config_params, "valid", shuffle=False,batch_size=config_params.batch_size, num_workers =config_params.num_workers)
 
-    if TESTING:
-        train_dataset = LimitedDataset(train_dataset, limit=10)
-        valid_dataset = LimitedDataset(valid_dataset, limit=10)
-        test_dataset = LimitedDataset(test_dataset, limit=20)
-    if not config_params.RUN_NAS:
-            config_params.num_trials = 1
+    # if TESTING:
+    #     train_dataset = LimitedDataset(train_dataset, limit=10)
+    #     valid_dataset = LimitedDataset(valid_dataset, limit=10)
+    #     test_dataset = LimitedDataset(test_dataset, limit=20)
+    # if not config_params.RUN_NAS:
+    #         config_params.num_trials = 1
     median_pruner = optuna.pruners.MedianPruner(n_warmup_steps=0)
    
     if config_params.sampler_path:
@@ -491,38 +491,67 @@ if __name__ == "__main__":
                                 pruner = median_pruner,
                                 storage = "sqlite:///optuna_nas.db",
                                 load_if_exists=True )
-    # adding 2.5 h time limit
-    study.optimize(make_objective(config_params, train_dataset, valid_dataset, time_limit=config_params.time_limit), n_trials=config_params.num_trials, callbacks=[save_sampler_callback])
-    with open(f"sampler_{config_params.optuna_name}.pkl", "wb") as fout:
-        pickle.dump(study.sampler, fout)
-    if config_params.RUN_NAS:
-        best_trials = study.best_trials
-        best_summaries = []
-        for trial in study.best_trials:
-            best_summaries.append( {
-            "trial_number": trial.number,
-            **trial.params,
-            "objectives": trial.values
+    # # adding 2.5 h time limit
+    # study.optimize(make_objective(config_params, train_dataset, valid_dataset, time_limit=config_params.time_limit), n_trials=config_params.num_trials, callbacks=[save_sampler_callback])
+    # with open(f"sampler_{config_params.optuna_name}.pkl", "wb") as fout:
+    #     pickle.dump(study.sampler, fout)
+    # if config_params.RUN_NAS:
+    #     best_trials = study.best_trials
+    #     best_summaries = []
+    #     for trial in study.best_trials:
+    #         best_summaries.append( {
+    #         "trial_number": trial.number,
+    #         **trial.params,
+    #         "objectives": trial.values
 
-            })
+    #         })
         
-        with open ("best_summaries.json", "w") as f:
-            json.dump(best_summaries, f, indent = 4)
-
-    """
+    #     with open ("best_summaries.json", "w") as f:
+    #         json.dump(best_summaries, f, indent = 4)
+    best_trials = study.best_trials
+    params = best_trials[3].params    # 0 is trial 35, 3 is 58
+    #print(best_trials)
     print("evaluating the model from hf")
-    with open('best_summary.json') as json_file:
+    with open('best_summaries.json') as json_file:
         best_trial = json.load(json_file)
     
     
     
     #tsest_dataset = LimitedDataset(test_dataset, limit=10)
-    config_dict["hyperparams"] = best_trial
-    config = BertConfig.from_pretrained(config_dict["hf_repository"], force_download=True) # thus ensures that the most
+    config_dict["hyperparams"] = best_trial[-1]
+    hyperparams_dict = {}
+    parameters = {"num_linear_layers": [1, 6], "activation_fn": ["tanh", "relu", "gelu"],
+                "pooler_dropout": [0.0, 0.5], "normalisation" :  ["none", "layer"], "linear_layers_dim":[32, 768] }
+    for target in (config_params.targets):
+        MIN_LAYERS, MAX_LAYERS, = parameters["num_linear_layers"][0], parameters["num_linear_layers"][1]
+        target_params = {}
+        # First choose num_linear_layers to use in later loops
+        target_params["num_linear_layers"] =  params[f"num_linear_layers_{target}"]
+        num_layers = target_params["num_linear_layers"]
+        #max_dim = max(768, train_dataset.vocab_sizes[config.targets.index(target)] )
+        #min_dim = min (32, train_dataset.vocab_sizes[config.targets.index(target)])
+        target_params["linear_layers_dim"]  = [
+                params[f"layer_dim_{target}_{i}"] for i in range(num_layers)
+        ]
+        # Activation function per layer
+        target_params["activation_fn"] = [ 
+             params[f"activation_fn_{target}_{i}"] for i in range(num_layers)
+        ]
+        # Dropout per layer
+        target_params["pooler_dropout"] = [
+             params[f"pooler_dropout_{target}_{i}"] for i in range(num_layers)
+        ]
+        target_params["normalisation"] = [
+            params[f"normalisation_{target}_{i}"] for i in range(num_layers)
+        ]
+        hyperparams_dict[target] = target_params
+    
+    path = Path("/hpcwork/ui556004/results/nas_layers_extended_new/trial_0058/checkpoint-34000")
+    config = BertConfig.from_pretrained(path, force_download=True) # thus ensures that the most
                                                                                 # up-to-date model is loaded (polina)
-    #config.hyperparams = best_trial
+    config.hyperparams =hyperparams_dict
     #config_dict.update(best_trial) # best_trial.params
-    model = MusicBertTokenClassification.from_pretrained(config_dict["hf_repository"], config= config)   #config_dict["hf_repository"],
+    model = MusicBertMultiTaskTokenClassification.from_pretrained(pretrained_model_name_or_path =path, config=config)   #config_dict["hf_repository"],
     
 
     model.config.multitask_label2id = train_dataset.stois
@@ -556,4 +585,3 @@ if __name__ == "__main__":
     test_results = test_trainer.evaluate()
     for k, v in test_results.items():
         print(f"{k}: {v:.4f}")
-   """

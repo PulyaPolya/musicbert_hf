@@ -1,6 +1,61 @@
 import numpy as np
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+import torch
+import torch.nn.functional as F
 
+
+def topk_threshold_accuracy(
+    logits: np.ndarray,      # shape [B, T, C] or [N, C]
+    labels: np.ndarray,      # shape [B, T] or [N]
+    k: int = 3,
+    min_prob: float = 0.10,
+    ignore_index: int = -100,
+):
+    # Ensure 3D/2D consistency
+    if logits.ndim == 3:   # [B, T, C] -> flatten valid positions
+        B, T, C = logits.shape
+        labels_flat = labels.reshape(-1)
+        logits_flat = logits.reshape(-1, C)
+
+    # mask valid tokens
+    valid = labels_flat != ignore_index
+    if not np.any(valid):
+        return 0.0, 0, 0  # accuracy, correct, total
+
+    labels_v = labels_flat[valid]
+    logits_v = logits_flat[valid]  # [M, C]
+    M, C = logits_v.shape
+
+    # softmax
+    logits_v = logits_v - logits_v.max(axis=1, keepdims=True)
+    probs = np.exp(logits_v)
+    probs /= probs.sum(axis=1, keepdims=True)  # [M, C]
+
+    # top-k membership
+    kk = min(k, C)
+    # argpartition gives indices of top-k (unordered within the top set)
+    topk_idx = np.argpartition(probs, -kk, axis=1)[:, -kk:]  # [M, kk] [1,3,0, -4, 3,5,6,-2] -> [4,5,6]
+
+    # check if true label is inside top-k
+    in_topk = (topk_idx == labels_v[:, None]).any(axis=1)  # [M]
+
+    # probability of the true label
+    row_idx = np.arange(M)
+    true_prob = probs[row_idx, labels_v]  # [M]
+
+    meets_threshold = true_prob >= min_prob
+
+    correct = in_topk & meets_threshold
+    acc = float(correct.mean())
+    return acc
+
+
+def convert_to_rn(eval_pred):
+    id2label = model.config.id2label  # e.g. {0: "O", 1: "B-ORG", 2: "I-ORG", ...}
+
+# Convert indices to label names
+    predicted_labels = [id2label[p] for p in true_predictions]
+    true_label_names = [id2label[l] for l in true_labels]
 
 def compute_metrics(eval_pred):
     logits, labels = eval_pred
@@ -24,6 +79,9 @@ def compute_metrics(eval_pred):
     precision = precision_score(true_labels, true_predictions, average="macro")
     recall = recall_score(true_labels, true_predictions, average="macro")
     accuracy = accuracy_score(true_labels, true_predictions)
+    acc_new = topk_threshold_accuracy(logits, labels, k=3, min_prob=0.10)
+    print(f"old accuracy is {accuracy}")
+    print(f"new accuracy is {acc_new}")
 
     return {
         "precision": precision,

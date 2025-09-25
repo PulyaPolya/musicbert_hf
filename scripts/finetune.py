@@ -59,6 +59,7 @@ from musicbert_hf.checkpoints import (
     load_musicbert_multitask_token_classifier_from_fairseq_checkpoint,
     load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint,
     load_musicbert_token_classifier_from_fairseq_checkpoint,
+    create_hyperparams_dict
 )
 from musicbert_hf.data import HDF5Dataset, collate_for_musicbert_fn
 from musicbert_hf.metrics import compute_metrics, compute_metrics_multitask
@@ -301,9 +302,9 @@ def make_objective(config, train_dataset, valid_dataset, time_limit):
                     for i in range(MAX_LAYERS)
                 ][:num_layers]
                 hyperparams_dict[target] = target_params
-            config.freeze_layers = trial.suggest_int(f"freeze_layers", 0, 11)
-            config.learning_rate = trial.suggest_float("learning_rate", 1e-5, 1e-3, log = True)
-            config.batch_size = trial.suggest_categorical("batch_size",[4, 8, 16, 32])   #!!!!!!!!!
+            config.freeze_layers = 2# trial.suggest_int(f"freeze_layers", 0, 11)
+            config.learning_rate = 0.000040441 #trial.suggest_float("learning_rate", 1e-5, 1e-3, log = True)
+            config.batch_size = 4 #trial.suggest_categorical("batch_size",[4, 8, 16, 32])   #!!!!!!!!!
         else:
             with open("best_summary.json") as f:
                 best_params_dict = json.load(f)
@@ -362,7 +363,7 @@ def make_objective(config, train_dataset, valid_dataset, time_limit):
         # originally evaluate every 1000 steps, adjust for different batch sizes
         eval_steps = 5 if TESTING else 4000 // config.batch_size
         if TESTING:
-            config.max_steps = 5
+            config.max_steps = 1
             config.warmup_steps = 2
             config.batch_size = 4
         push_to_hub = False #False if TESTING else True
@@ -404,7 +405,7 @@ def make_objective(config, train_dataset, valid_dataset, time_limit):
         training_args = TrainingArguments(**training_kwargs)
 
         compute_metrics_fn = partial(
-            compute_metrics_multitask, task_names=config.targets
+            compute_metrics_multitask, task_names=config.targets, multitask_id2label = model.config.multitask_id2label
         ) if config.multitask else compute_metrics
         if config.wandb_name:
             params_to_log = ["freeze_layers", "batch_size", "learning_rate"]
@@ -437,8 +438,9 @@ def make_objective(config, train_dataset, valid_dataset, time_limit):
             signal.alarm(0)
             print(f"evaluating the model")
             eval_result = trainer.evaluate()
+            accuracies = [eval_result[f"eval_{target}_accuracy"] for target in config.targets]
             if config.wandb_name:
-                accuracies = [eval_result[f"eval_{target}_accuracy"] for target in config.targets]
+                
                 # wandb.log({f"eval_{target}_accuracy": eval_result[f"eval_{target}_accuracy"],
                 #         "seed":config.seed
                 #         })
@@ -471,7 +473,7 @@ if __name__ == "__main__":
     #valid_dataloader = create_dataloader(config_params, "valid", shuffle=False,batch_size=config_params.batch_size, num_workers =config_params.num_workers)
 
     if TESTING:
-        train_dataset = LimitedDataset(train_dataset, limit=10)
+        train_dataset = LimitedDataset(train_dataset, limit=5)
         valid_dataset = LimitedDataset(valid_dataset, limit=10)
         test_dataset = LimitedDataset(test_dataset, limit=20)
     if not config_params.RUN_NAS:
@@ -489,99 +491,53 @@ if __name__ == "__main__":
                                 directions= ["maximize", "maximize","maximize", "maximize"],
                                 sampler = sampler,
                                 pruner = median_pruner,
-                                storage = "sqlite:///0optuna_nas.db",
+                                storage = "sqlite:///optuna_nas.db",
                                 load_if_exists=True )
-    # # adding 2.5 h time limit
-    study.optimize(make_objective(config_params, train_dataset, valid_dataset, time_limit=config_params.time_limit), n_trials=config_params.num_trials, callbacks=[save_sampler_callback])
-    with open(f"sampler_{config_params.optuna_name}.pkl", "wb") as fout:
-        pickle.dump(study.sampler, fout)
     if config_params.RUN_NAS:
+        study.optimize(make_objective(config_params, train_dataset, valid_dataset, time_limit=config_params.time_limit), n_trials=config_params.num_trials, callbacks=[save_sampler_callback])
+        with open(f"sampler_{config_params.optuna_name}.pkl", "wb") as fout:
+            pickle.dump(study.sampler, fout)
+    else:
+
         best_trials = study.best_trials
-        best_summaries = []
-        for trial in study.best_trials:
-            best_summaries.append( {
-            "trial_number": trial.number,
-            **trial.params,
-            "objectives": trial.values
-
-            })
+        params = best_trials[3].params    # 0 is trial 35, 3 is 58
+        print("evaluating the model from hf")
+        hyperparams_dict = create_hyperparams_dict(config_params.targets, params)
         
-    #     with open ("best_summaries.json", "w") as f:
-    #         json.dump(best_summaries, f, indent = 4)
-    # best_trials = study.best_trials
-    # params = best_trials[3].params    # 0 is trial 35, 3 is 58
-    # #print(best_trials)
-    # print("evaluating the model from hf")
-    # with open('best_summaries.json') as json_file:
-    #     best_trial = json.load(json_file)
+        path = Path("/hpcwork/ui556004/results/nas_layers_extended_new/trial_0058/checkpoint-34000")
+        config = BertConfig.from_pretrained(path, force_download=True) # this ensures that the most
+                                                                                    # up-to-date model is loaded (polina)
+        config.hyperparams =hyperparams_dict
     
-    
-    
-    # #tsest_dataset = LimitedDataset(test_dataset, limit=10)
-    # config_dict["hyperparams"] = best_trial[-1]
-    # hyperparams_dict = {}
-    # parameters = {"num_linear_layers": [1, 6], "activation_fn": ["tanh", "relu", "gelu"],
-    #             "pooler_dropout": [0.0, 0.5], "normalisation" :  ["none", "layer"], "linear_layers_dim":[32, 768] }
-    # for target in (config_params.targets):
-    #     MIN_LAYERS, MAX_LAYERS, = parameters["num_linear_layers"][0], parameters["num_linear_layers"][1]
-    #     target_params = {}
-    #     # First choose num_linear_layers to use in later loops
-    #     target_params["num_linear_layers"] =  params[f"num_linear_layers_{target}"]
-    #     num_layers = target_params["num_linear_layers"]
-    #     #max_dim = max(768, train_dataset.vocab_sizes[config.targets.index(target)] )
-    #     #min_dim = min (32, train_dataset.vocab_sizes[config.targets.index(target)])
-    #     target_params["linear_layers_dim"]  = [
-    #             params[f"layer_dim_{target}_{i}"] for i in range(num_layers)
-    #     ]
-    #     # Activation function per layer
-    #     target_params["activation_fn"] = [ 
-    #          params[f"activation_fn_{target}_{i}"] for i in range(num_layers)
-    #     ]
-    #     # Dropout per layer
-    #     target_params["pooler_dropout"] = [
-    #          params[f"pooler_dropout_{target}_{i}"] for i in range(num_layers)
-    #     ]
-    #     target_params["normalisation"] = [
-    #         params[f"normalisation_{target}_{i}"] for i in range(num_layers)
-    #     ]
-    #     hyperparams_dict[target] = target_params
-    
-    # path = Path("/hpcwork/ui556004/results/nas_layers_extended_new/trial_0058/checkpoint-34000")
-    # config = BertConfig.from_pretrained(path, force_download=True) # thus ensures that the most
-    #                                                                             # up-to-date model is loaded (polina)
-    # config.hyperparams =hyperparams_dict
-    # #config_dict.update(best_trial) # best_trial.params
-    # model = MusicBertMultiTaskTokenClassification.from_pretrained(pretrained_model_name_or_path =path, config=config)   #config_dict["hf_repository"],
-    
+        model = MusicBertMultiTaskTokenClassification.from_pretrained(pretrained_model_name_or_path =path, config=config)   #config_dict["hf_repository"],
+        model.config.multitask_label2id = train_dataset.stois
+        model.config.multitask_id2label = {
+            target: {v: k for k, v in train_dataset.stois[target].items()}
+            for target in train_dataset.stois
+        }
+        model.config.targets = list(config_params.targets)
+        
+        test_args = TrainingArguments(
+        #output_dir=best_model_dir,
+        per_device_eval_batch_size=config_params.batch_size,
+        report_to=None,
+        do_train=False,
+        do_eval=True,
+        )
+        
+        compute_metrics_fn = partial(
+        compute_metrics_multitask, task_names=config_params.targets
+        ) if config_params.multitask else compute_metrics
+        del train_dataset
+        test_trainer = Trainer(
+            model=model,
+            args=test_args,
+            data_collator=partial(collate_for_musicbert_fn, multitask=config_params.multitask),
+            eval_dataset=test_dataset,
+            compute_metrics=compute_metrics_fn,
+        )
 
-    # model.config.multitask_label2id = train_dataset.stois
-    # model.config.multitask_id2label = {
-    #     target: {v: k for k, v in train_dataset.stois[target].items()}
-    #     for target in train_dataset.stois
-    # }
-    # model.config.targets = list(config_params.targets)
-    
-    # test_args = TrainingArguments(
-    # #output_dir=best_model_dir,
-    # per_device_eval_batch_size=config_params.batch_size,
-    # report_to=None,
-    # do_train=False,
-    # do_eval=True,
-    # )
-    
-    # compute_metrics_fn = partial(
-    # compute_metrics_multitask, task_names=config_params.targets
-    # ) if config_params.multitask else compute_metrics
-    # del train_dataset
-    # test_trainer = Trainer(
-    #     model=model,
-    #     args=test_args,
-    #     data_collator=partial(collate_for_musicbert_fn, multitask=config_params.multitask),
-    #     eval_dataset=test_dataset,
-    #     compute_metrics=compute_metrics_fn,
-    # )
-
-    # print("Evaluating best model on test set...")
-    # test_results = test_trainer.evaluate()
-    # for k, v in test_results.items():
-    #     print(f"{k}: {v:.4f}")
+        print("Evaluating best model on test set...")
+        test_results = test_trainer.evaluate()
+        for k, v in test_results.items():
+            print(f"{k}: {v:.4f}")

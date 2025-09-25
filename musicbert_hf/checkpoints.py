@@ -597,3 +597,27 @@ def load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_che
             model.config.multitask_label2id[target] = stoi
             model.config.multitask_id2label[target] = {v: k for k, v in stoi.items()}
     return model
+
+def create_hyperparams_dict(targets, params):
+    hyperparams_dict = {}
+    for target in (targets):
+        target_params = {}
+        # First choose num_linear_layers to use in later loops
+        target_params["num_linear_layers"] =  params[f"num_linear_layers_{target}"]
+        num_layers = target_params["num_linear_layers"]
+        target_params["linear_layers_dim"]  = [
+                params[f"layer_dim_{target}_{i}"] for i in range(num_layers)
+        ]
+        # Activation function per layer
+        target_params["activation_fn"] = [ 
+             params[f"activation_fn_{target}_{i}"] for i in range(num_layers)
+        ]
+        # Dropout per layer
+        target_params["pooler_dropout"] = [
+             params[f"pooler_dropout_{target}_{i}"] for i in range(num_layers)
+        ]
+        target_params["normalisation"] = [
+            params[f"normalisation_{target}_{i}"] for i in range(num_layers)
+        ]
+        hyperparams_dict[target] = target_params
+    return hyperparams_dict

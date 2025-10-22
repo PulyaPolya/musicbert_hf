@@ -177,6 +177,7 @@ def predict_and_save_hf_multitask(
     overwrite: bool = False,
     ignore_specials: int = 4,
     compound_token_ratio: int = 8,
+    trim_bos_eos: bool = True,
 ):
     """
     Saves:
@@ -257,7 +258,7 @@ def predict_and_save_hf_multitask(
                 n_valid_tokens.append(len(ex["input_ids"]))
             else:
                 n_valid_tokens.append(int(np.asarray(attn).sum()))
-        n_target_tokens = np.array(n_valid_tokens) // compound_token_ratio
+        n_target_tokens = np.array(n_valid_tokens)#np.array(n_valid_tokens) // compound_token_ratio
     else:
         # Fallback: use full sequence length from logits (minus specials assumed later by ignore_specials)
         if isinstance(logits_all, dict):
@@ -271,61 +272,51 @@ def predict_and_save_hf_multitask(
     # 5) Helper to write one task
     def handle_one_task(target: str, task_logits: np.ndarray):
         """
-        task_logits: np.ndarray [N, T, V]
+        Improved: handles BOS/EOS trimming consistently with fairseq.
         """
-        # Prepare files
         txt_path = os.path.join(preds_folder, f"{target}.txt")
-        h5_path  = os.path.join(preds_folder, f"{target}.h5")
+        h5_path = os.path.join(preds_folder, f"{target}.h5")
         dict_path = os.path.join(dataset_folder, f"{target}_dictionary.txt")
 
-        # Dump dictionary (optional but mirrors fairseq script)
         _write_dictionary_dump(dict_path, id2label_map[target])
 
-        # Create HDF5
         h5f = h5py.File(h5_path, "w")
         try:
-            # Argmax for predicted IDs
             pred_ids = task_logits.argmax(axis=-1)  # [N, T]
 
             with open(txt_path, "w", encoding="utf-8") as txt_out:
                 for idx in range(N):
-                    # (a) slice valid length
                     n_tok = int(n_target_tokens[idx])
-                    ids_seq = pred_ids[idx, :n_tok]  # [n_tok]
-
-                    # (b) drop specials by *vocab offset* like fairseq script (ignore first K symbols)
-                    #     In fairseq they trimmed logits columns: data[:, ignore_specials:].
-                    #     That is equivalent to remapping IDs: keep IDs that are >= ignore_specials,
-                    #     but for decoding we simply decode as-is; the original script trimmed BEFORE argmax.
-                    #     To match its decoding best, we can **re-argmax** on the trimmed logits for each step.
-                    #     That’s heavier; instead we’ll mimic by decoding existing ids but skipping if special.
-                    #     If you prefer exact parity, see the alternative branch below.
-                    #
-                    # Simple approach (close to original behavior in most setups):
-                    # Filter out predicted specials at the beginning by replacing with a pad or skipping.
-                    # Often your id2label will not contain these anyway.
-                    #
-                    # If you want **exact** parity with the fairseq code,
-                    # uncomment the "Exact parity" block below and comment out the simple approach.
-
-                    # --- Simple approach: decode directly, specials will map to labels if present ---
-                    #decoded = _decode_ids_to_tokens(ids_seq, id2label_map[target])
-
-                    # --- Exact parity (optional): recompute argmax over logits[:, ignore_specials:] ---
-                    trimmed_logits = task_logits[idx, :n_tok, ignore_specials:]  # [n_tok, V - ignore_specials]
+                    
+                    # IMPROVEMENT 1: Apply BOS/EOS trimming if specified
+                    if trim_bos_eos:
+                        # Remove first and last token: [1:-1]
+                        seq_start, seq_end = 1, n_tok - 1 if n_tok > 1 else 1
+                    else:
+                        seq_start, seq_end = 0, n_tok
+                    
+                    ids_seq = pred_ids[idx, seq_start:seq_end]
+                    
+                    # IMPROVEMENT 2: Trim logits for argmax (exact fairseq parity)
+                    # fairseq: data[:, ignore_specials:] on the trimmed logits
+                    trimmed_logits = task_logits[idx, seq_start:seq_end, ignore_specials:]
                     trimmed_ids = trimmed_logits.argmax(axis=-1) + ignore_specials
                     decoded = _decode_ids_to_tokens(trimmed_ids, id2label_map[target])
 
                     txt_out.write(" ".join(decoded) + "\n")
 
-                    # Save raw logits per example like fairseq: (trim seq and trim vocab columns)
-                    # fairseq saved: data = logits[1:-1, ignore_specials:]
-                    # Here we don't have BOS/EOS necessarily; assume no 1:-1 needed. If you do,
-                    # replace :n_tok with 1:n_tok-1 accordingly.
-                    data = task_logits[idx, :n_tok, :]
+                    # IMPROVEMENT 3: Save HDF5 with same trimming as txt
+                    # Match fairseq exactly: [1:-1] + [:, ignore_specials:]
+                    data = task_logits[idx, seq_start:seq_end, :]
                     if ignore_specials:
                         data = data[:, ignore_specials:]
-                    h5f.create_dataset(f"logits_{idx}", data=data.astype(np.float32))
+                    
+                    h5f.create_dataset(
+                        f"logits_{idx}",
+                        data=data.astype(np.float32),
+                        #compression="gzip",  # BONUS: compress to save disk space
+                        #compression_opts=4
+                    )
         finally:
             h5f.close()
 
@@ -409,7 +400,7 @@ def main(args):
 
     test_dataset = get_dataset(args, "test")
     train_dataset = get_dataset(args, "train")
-    #test_dataset = LimitedDataset(test_dataset, limit=4)
+    #test_dataset = LimitedDataset(test_dataset, limit=  10)
     model.config.multitask_label2id = train_dataset.stois
     model.config.multitask_id2label = {
         target: {v: k for k, v in train_dataset.stois[target].items()}

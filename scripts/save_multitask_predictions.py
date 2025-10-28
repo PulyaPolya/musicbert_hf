@@ -400,7 +400,7 @@ def main(args):
 
     test_dataset = get_dataset(args, "test")
     train_dataset = get_dataset(args, "train")
-    #test_dataset = LimitedDataset(test_dataset, limit=  10)
+    test_dataset = LimitedDataset(test_dataset, limit=  10)
     model.config.multitask_label2id = train_dataset.stois
     model.config.multitask_id2label = {
         target: {v: k for k, v in train_dataset.stois[target].items()}

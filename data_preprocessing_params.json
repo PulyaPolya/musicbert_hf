@@ -1,8 +1,0 @@
-{
-"input_base_folder":  "/home/ui556004/datasets/rnbert_seqs/data",
-"output_base_folder": "/home/ui556004/datasets/rnbert_seqs/data",
-"features":["primary_alteration_primary_degree_secondary_alteration_secondary_degree" ],
-"concat_features": [],
-"vocab_dir": "/home/ui556004/datasets/rnbert_abstract_data_bin/vocabs"
-
-}

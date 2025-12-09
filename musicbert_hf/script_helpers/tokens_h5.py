@@ -7,11 +7,13 @@ import h5py
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+import json
 
 from musicbert_hf.script_helpers.get_vocab import handle_vocab
 
 
 def to_tokens_h5(
+    split,
     input_csv_folder,
     output_folder,
     features,
@@ -19,11 +21,11 @@ def to_tokens_h5(
     concat_features: list[list[str]] | None = None,
     max_rows=None,
     feature_must_divide_by: dict[str, int] | None = None,
+    save_file_info = False
 ):
-    #print("in the function")
+    mapping = {}
     csv_files = glob.glob(os.path.join(input_csv_folder, "*.csv"))
     logging.info(f"Found {len(csv_files)} csv files in {input_csv_folder}")
-    #print(f"Found {len(csv_files)} csv files in {input_csv_folder}")
     os.makedirs(output_folder, exist_ok=True)
     if concat_features is None:
         concat_features = []
@@ -36,11 +38,8 @@ def to_tokens_h5(
         )
         for concat in concat_features
     }
-    #print(output_files)
     for feature_name, this_stoi in stoi.items():
         vocab_size = len(this_stoi)
-        #print(feature_name)
-        #print(output_files)
         if feature_name in output_files:
             output_files[feature_name].create_dataset("vocab_size", data=vocab_size)
             string_dt = h5py.special_dtype(vlen=str)
@@ -67,6 +66,7 @@ def to_tokens_h5(
             else:
                 assert not df.iloc[0][feature].endswith("</s>")
         for _, row in df.iterrows():
+            mapping[row_count] = row["score_id"]
             for feature in features:
                 this_stoi = stoi[feature]
                 tokens = row[feature].split()
@@ -110,6 +110,9 @@ def to_tokens_h5(
                 # very large?
                 break
     logging.info(f"Wrote {row_count} rows to {output_folder}")
+    if save_file_info:
+        with open(f'data_creation_mapping_{split}.json', 'w') as fp:
+            json.dump(mapping, fp)
     for output_file in output_files.values():
         logging.info(f"Wrote {output_file.filename}")
         output_file.create_dataset("num_seqs", data=row_count)

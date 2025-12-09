@@ -177,7 +177,7 @@ def predict_and_save_hf_multitask(
     overwrite: bool = False,
     ignore_specials: int = 4,
     compound_token_ratio: int = 8,
-    trim_bos_eos: bool = True,
+    trim_bos_eos: bool = False,
 ):
     """
     Saves:
@@ -451,7 +451,7 @@ def main(args):
 )
 
 if __name__ == "__main__":
-    cfg =load_config("/home/ui556004/projects/musicbert_hf/scripts/save_params.yaml")
+    cfg =load_config("scripts/save_params.yaml")
    # args = parser.parse_args()
 
     main(cfg)

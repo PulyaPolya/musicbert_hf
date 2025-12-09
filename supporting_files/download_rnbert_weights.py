@@ -4,7 +4,7 @@ import os
 from huggingface_hub import hf_hub_download
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-WEIGHTS_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), "..", "rnbert_weights")
+WEIGHTS_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), "..", "rnbert_weights")  #os.path.join(os.path.dirname(SCRIPT_DIR),  "rnbert_weights")
 
 os.makedirs(WEIGHTS_DIR, exist_ok=True)
 

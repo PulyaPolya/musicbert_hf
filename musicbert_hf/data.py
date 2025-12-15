@@ -6,6 +6,11 @@ from torch.utils.data import Dataset
 
 from musicbert_hf.constants import INPUT_PAD, TARGET_PAD
 
+def order_labels(stois_target):
+    ordered_labels = [lab for lab, _ in sorted(stois_target .items(), key=lambda kv: kv[1])]
+    ordered = {lab: i for i, lab in enumerate(ordered_labels)}
+    return ordered
+
 
 def collate_for_musicbert_fn(batch, multitask=False):
     """
@@ -101,6 +106,7 @@ class HDF5Dataset(Dataset):
             name: json.loads(target["vocab"][()].decode())
             for name, target in zip(target_names, self.targets)
         }
+       # self.stois = {target : order_labels(self.stois[target]) for target in self.stois.keys() }
         if self.conditioning is not None:
             self.conditioning_vocab_size = int(self.conditioning["vocab_size"][()])
             conditioning_name = self.conditioning["name"][()].decode()

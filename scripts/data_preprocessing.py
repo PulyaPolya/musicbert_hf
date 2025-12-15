@@ -87,6 +87,7 @@ def main(config: Config):
         logging.info(f"Processing {split} split")
         #print("going into function")
         to_tokens_h5(
+            split,
             input_csv_folder=getattr(config, f"{split}_input_folder"),
             output_folder=getattr(config, f"{split}_output_folder"),
             features=config.features,

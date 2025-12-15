@@ -1,6 +1,5 @@
 """
 Predict keys and Roman-numeral annotations from a MIDI file.
-
 Usage:
 
 ```bash
@@ -50,8 +49,9 @@ from music_df.humdrum_export.pdf import df_to_pdf
 from reprs.oct import OctupleEncodingSettings
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
-
-from musicbert_hf.checkpoints import (
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from musicbert_hf.checkpoints_old import (
     load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint,
     load_musicbert_token_classifier_from_fairseq_checkpoint,
 )
@@ -62,7 +62,7 @@ from musicbert_hf.decoding_helpers import (
     get_rn_annotations,
     keep_new_elements_only,
 )
-from musicbert_hf.models import (
+from musicbert_hf.models_old import (
     MusicBertMultiTaskTokenClassConditioned,
     MusicBertTokenClassification,
 )
@@ -71,9 +71,21 @@ from musicbert_hf.utils.collate import collate_logits, collate_slice_ids
 from musicbert_hf.utils.read import read_symbolic_score
 from musicbert_hf.utils.sticky_viterbi import sticky_viterbi
 from musicbert_hf.utils.sync_slices import sync_slices
+import numpy as np
+import ast
+def parse_other(val):
+    if pd.isna(val):
+        return np.nan  
+    if isinstance(val, str):
+        val = val.strip()
+        if not val:
+            return np.nan
+        return ast.literal_eval(val)
+    return val
+
 
 # TODO: (Malcolm 2025-02-11) set to False
-DEBUG = True
+DEBUG = False
 
 if DEBUG:
 
@@ -120,7 +132,7 @@ class Config:
         default_factory=lambda: {"degree", "quality", "inversion", "harmony_onset"}
     )
 
-    make_pdf: bool = False
+    make_pdf: bool = True
     batch_size: int = 4
     degree_feature_name: str = (
         "primary_alteration_primary_degree_secondary_alteration_secondary_degree"

@@ -259,6 +259,7 @@ def save_sampler_callback(study, trial):
 def make_objective(config, train_dataset, valid_dataset, time_limit):
     def objective(trial):
     # Load original config from JSON
+        long_degree = "primary_alteration_primary_degree_secondary_alteration_secondary_degree"
         _, training_kwargs = get_config_and_training_kwargs(config_path= "scripts/finetune_params.json")
         
         if config.wandb_project:
@@ -302,20 +303,20 @@ def make_objective(config, train_dataset, valid_dataset, time_limit):
                     for i in range(MAX_LAYERS)
                 ][:num_layers]
                 hyperparams_dict[target] = target_params
-            config.freeze_layers = 2# trial.suggest_int(f"freeze_layers", 0, 11)
-            config.learning_rate = 0.000040441 #trial.suggest_float("learning_rate", 1e-5, 1e-3, log = True)
+            config.freeze_layers = 9# trial.suggest_int(f"freeze_layers", 0, 11)
+            config.learning_rate =2.5e-4 #trial.suggest_float("learning_rate", 1e-5, 1e-3, log = True)
             config.batch_size = 4 #trial.suggest_categorical("batch_size",[4, 8, 16, 32])   #!!!!!!!!!
+            hyperparams_df = pd.DataFrame.from_dict(hyperparams_dict).T
+            hyperparams_df.rename(index = {long_degree: "degree"}, inplace=True)
+            print("Chosen hyperparameters")
+            print(hyperparams_df)
         else:
             with open("best_summary.json") as f:
                 best_params_dict = json.load(f)
                 hyperparams_dict  = get_best_params_from_dict(best_params_dict, "inversion")
                # seed = random.randint(0, 2**31-1)
         set_seed(config.seed)  
-        long_degree = "primary_alteration_primary_degree_secondary_alteration_secondary_degree"
-        hyperparams_df = pd.DataFrame.from_dict(hyperparams_dict).T
-        hyperparams_df.rename(index = {long_degree: "degree"}, inplace=True)
-        print("Chosen hyperparameters")
-        print(hyperparams_df)
+       
         print(f"number of frozen layers: {config.freeze_layers},  learning_rate: {config.learning_rate}, batch_size {config.batch_size}")
         # Load model
         if not config.checkpoint_path:
@@ -508,7 +509,6 @@ if __name__ == "__main__":
         config = BertConfig.from_pretrained(path, force_download=True) # this ensures that the most
                                                                                     # up-to-date model is loaded (polina)
         config.hyperparams =hyperparams_dict
-    
         model = MusicBertMultiTaskTokenClassification.from_pretrained(pretrained_model_name_or_path =path, config=config)   #config_dict["hf_repository"],
         model.config.multitask_label2id = train_dataset.stois
         model.config.multitask_id2label = {

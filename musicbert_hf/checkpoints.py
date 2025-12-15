@@ -27,11 +27,11 @@ T = TypeVar("T", bound=BertPreTrainedModel)
 
 
 def _load_from_checkpoint(
-    hyperparameter_config,
     model_config,
     src_state_dict,
     model_cls: Type[T],
     parameter_mapping: dict | None = None,
+    hyperparameter_config: dict | None = None,
     print_missing_keys: bool = False,
     expected_missing_src_keys: list[str] | None = None,
     expected_missing_dst_keys: list[str] | None = None,
@@ -61,9 +61,6 @@ def _load_from_checkpoint(
         max_position_embeddings=max_positions + 2,
         tie_word_embeddings=False,
         pad_token_id=padding_idx,
-        #pooler_dropout = hyperparameter_config["pooler_dropout"],
-        #num_linear_layers = hyperparameter_config["num_linear_layers"],
-        #activation_fn = hyperparameter_config["activation_fn"],
         **config_with_hyperparams
     )
 
@@ -271,11 +268,12 @@ def load_musicbert_from_fairseq_checkpoint(
 
 
 def load_musicbert_token_classifier_from_fairseq_checkpoint(
-    hyperparams_config,
+   
     checkpoint_path: str,
     print_missing_keys: bool = False,
     checkpoint_type: Literal["musicbert", "token_classifier"] = "token_classifier",
     num_labels: int | None = None,
+    hyperparams_config = None,
     weights_only: bool = False,
     vocab_path: str | None = None,
     **config_kwargs,
@@ -324,9 +322,10 @@ def load_musicbert_token_classifier_from_fairseq_checkpoint(
         raise ValueError(f"Invalid checkpoint type: {checkpoint_type}")
 
     model = _load_from_checkpoint(
-        hyperparams_config,
+
         model_config,
         src_state_dict,
+        hyperparams_config = hyperparams_config,
         model_cls=MusicBertTokenClassification,  # type:ignore
         print_missing_keys=print_missing_keys,
         parameter_mapping=parameter_mapping,
@@ -419,12 +418,13 @@ def load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
         "encoder.lm_head.layer_norm.bias",
     ]
     model = _load_from_checkpoint(
-        hyperparams_config,
+        
         model_config = model_config,
         src_state_dict = src_state_dict,
         model_cls=MusicBertMultiTaskTokenClassification,  # type:ignore
         print_missing_keys=print_missing_keys,
         parameter_mapping=parameter_mapping,
+        hyperparameter_config = hyperparams_config,
         expected_missing_src_keys=expected_missing_src_keys,
         expected_missing_dst_keys=expected_missing_dst_keys,
         classifier_dropout=classifier_dropout,

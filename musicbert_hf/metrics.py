@@ -50,13 +50,6 @@ def topk_threshold_accuracy(
     return acc
 
 
-def convert_to_rn(eval_pred):
-    id2label = model.config.id2label  # e.g. {0: "O", 1: "B-ORG", 2: "I-ORG", ...}
-
-# Convert indices to label names
-    predicted_labels = [id2label[p] for p in true_predictions]
-    true_label_names = [id2label[l] for l in true_labels]
-
 def compute_metrics(eval_pred):
     logits, labels = eval_pred
     predictions = np.argmax(logits, axis=-1)
@@ -74,19 +67,17 @@ def compute_metrics(eval_pred):
             for prediction, label in zip(predictions, labels)
         ]
     )
-
     # TODO: (Malcolm 2025-01-22) should consider best averaging strategy
     precision = precision_score(true_labels, true_predictions, average="macro")
     recall = recall_score(true_labels, true_predictions, average="macro")
     accuracy = accuracy_score(true_labels, true_predictions)
     acc_new = topk_threshold_accuracy(logits, labels, k=3, min_prob=0.10)
-    print(f"old accuracy is {accuracy}")
-    print(f"new accuracy is {acc_new}")
 
     return {
         "precision": precision,
         "recall": recall,
         "accuracy": accuracy,
+        "top3_accuracy": acc_new,
     }
 
 
@@ -103,17 +94,20 @@ def compute_metrics_multitask(eval_pred, *, task_names: list[str]):
     precisions = []
     recalls = []
     accuracies = []
+    accuracies_top3 = []
     for task_name, logits, labels in zip(task_names, logits_list, labels_list):
         task_metrics = compute_metrics((logits, labels))
         precisions.append(task_metrics["precision"])
         recalls.append(task_metrics["recall"])
         accuracies.append(task_metrics["accuracy"])
+        accuracies_top3.append(task_metrics["top3_accuracy"])
         for metric_name, metric_value in task_metrics.items():
             metrics[f"{task_name}_{metric_name}"] = metric_value
 
     metrics["precision"] = np.mean(precisions)
     metrics["recall"] = np.mean(recalls)
     metrics["accuracy"] = np.mean(accuracies)
+    metrics[ "top3_accuracy"] = np.mean(accuracies_top3)
 
     return metrics
 

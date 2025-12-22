@@ -1,0 +1,108 @@
+import os
+import sys
+import time
+from dataclasses import dataclass
+from functools import partial
+from typing import Literal, Sequence
+from transformers import BertConfig
+from torchinfo import summary
+from pathlib import Path
+from omegaconf import OmegaConf
+from transformers import Trainer, TrainingArguments
+import optuna
+import json
+import os
+import torch
+from math import ceil
+import numpy as np
+import random
+import pandas as pd
+import yaml
+from transformers import EarlyStoppingCallback, TrainerCallback
+#from transformers import T
+from torch.utils.data import Subset
+import wandb
+from torch.utils.data import DataLoader
+import pickle
+
+
+def _load_yaml_(path: Path) -> dict:
+    raw = path.read_text()
+    if path.suffix.lower() in (".yml", ".yaml"):
+        data = yaml.safe_load(raw) or {}
+    return data
+
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+    # For full reproducibility
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+def get_best_params_from_dict(best_params_dict, target):   # if we want to run the best model, here we can read all parameters from the file
+    hyperparams_dict = {}
+    num_layers = best_params_dict[f"num_linear_layers_{target}"] # TODO expand for multiple targets too
+    
+    target_params = {
+    "linear_layers_dim": [],
+    "activation_fn": [],
+    "pooler_dropout": [],
+    "normalisation": []
+        }                                           # so far it will only work for one target 
+    target_params["num_linear_layers"] = best_params_dict[f"num_linear_layers_{target}"]
+    for i in range(num_layers):
+        target_params["linear_layers_dim"].append(best_params_dict[f"layer_dim_{target}_{i}"])
+        target_params["linear_layers_dim"].sort(reverse = True)
+        target_params["activation_fn"].append(best_params_dict[f"activation_fn_{target}_{i}"])
+        target_params["pooler_dropout"].append(best_params_dict[f"pooler_dropout_{target}_{i}"])
+        target_params["pooler_dropout"].sort(reverse = True)
+        target_params["normalisation"].append(best_params_dict[f"normalisation_{target}_{i}"])  
+    hyperparams_dict[target] = target_params
+    return hyperparams_dict
+
+def create_hyperparams_dict(targets, params):
+    hyperparams_dict = {}
+    for target in (targets):
+        target_params = {}
+        # First choose num_linear_layers to use in later loops
+        target_params["num_linear_layers"] =  params[f"num_linear_layers_{target}"]
+        num_layers = target_params["num_linear_layers"]
+        target_params["linear_layers_dim"]  = [
+                params[f"layer_dim_{target}_{i}"] for i in range(num_layers)
+        ]
+        # Activation function per layer
+        target_params["activation_fn"] = [ 
+             params[f"activation_fn_{target}_{i}"] for i in range(num_layers)
+        ]
+        target_params["input_dropout"] = params[f"input_dropout_{target}"]
+        # Dropout per layer
+        target_params["pooler_dropout"] = [
+             params[f"pooler_dropout_{target}_{i}"] for i in range(num_layers)
+        ]
+        target_params["normalisation"] = [
+            params[f"normalisation_{target}_{i}"] for i in range(num_layers)
+        ]
+        hyperparams_dict[target] = target_params
+    return hyperparams_dict
+
+
+def load_baseline_params(targets):
+
+    hyperparams_dict = {}
+    for target in (targets):
+        target_params = {}
+        # First choose num_linear_layers to use in later loops
+        target_params["num_linear_layers"] = 1
+        target_params["linear_layers_dim"]  = [ 768]*2
+        # Activation function per layer
+        target_params["activation_fn"] = [ "tanh"]*2
+        # Input dropout
+        target_params["input_dropout"] = 0
+        # Dropout per layer
+        target_params["pooler_dropout"] = [0] * 2
+        target_params["normalisation"] = ["none"]*2
+        hyperparams_dict[target] = target_params
+    return hyperparams_dict

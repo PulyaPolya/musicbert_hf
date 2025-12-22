@@ -316,6 +316,7 @@ class RobertaSequenceTaggingHead(nn.Module):
         num_classes,
         activation_fns,
         pooler_dropout,
+        input_dropout,
         normalisation,
         linear_layers_dim,
         num_hidden_layers=1,
@@ -337,9 +338,10 @@ class RobertaSequenceTaggingHead(nn.Module):
 
         layers = []
         layers.append(nn.Sequential(
+            nn.Dropout(p=input_dropout),
             nn.Linear(input_dim, linear_layers_dim[0]),
+            self.activation_function_mapping[activation_fns[0]],
             nn.Dropout(p=pooler_dropout[0]),
-            self.activation_function_mapping[activation_fns[0]]
             #self.activation_fn,
         ))
         new_dim = linear_layers_dim[0]
@@ -357,9 +359,9 @@ class RobertaSequenceTaggingHead(nn.Module):
             #layers.append(nn.Linear(inner_dim, inner_dim))
             layers.append(nn.Sequential(
                 nn.Linear(old_dim, new_dim),
-                nn.Dropout(dropout_prob),
                 norm_layer,
-                activation_fn 
+                activation_fn ,
+                nn.Dropout(dropout_prob),
                 #self.activation_fn,
             ))
         self.hidden_layers = nn.ModuleList(layers)
@@ -412,9 +414,9 @@ class MusicBertTokenClassification(BertPreTrainedModel):
             if config.classifier_dropout is not None
             else config.hidden_dropout_prob
         )
-        param_dict = config.hyperparams
+        self.param_dict = config.hyperparams
        # if len(config.targets) > 1:
-        target_params = next(iter(param_dict.values())) # 
+        target_params = next(iter(self.param_dict.values())) # 
         #target_params = param_dict[config.targets[0]]   # TODO: change for the multitask case
         #else:
         #    target_params = param_dict.copy()
@@ -536,6 +538,7 @@ class RobertaSequenceMultiTaggingHead(nn.Module):
                     inner_dim=inner_dim,
                     num_classes=n_class,
                     activation_fns=target_params["activation_fn"] ,
+                    input_dropout=target_params["input_dropout"],
                     pooler_dropout=target_params["pooler_dropout"],
                     q_noise = q_noise,
                     qn_block_size = qn_block_size,

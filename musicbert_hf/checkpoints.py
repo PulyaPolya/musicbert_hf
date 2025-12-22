@@ -48,8 +48,9 @@ def _load_from_checkpoint(
     assert padding_idx == 1
 
     vocab_size = 1237  # Not sure if there is a way to retrieve this from ckpt_state_dict, can't find it
-    config_with_hyperparams = {**config_kwargs}
-    config_with_hyperparams["hyperparams"] = hyperparameter_config
+    config = {**config_kwargs}
+    if hyperparameter_config is not None:
+        config["hyperparams"] = hyperparameter_config
     bert_config = config_cls(
         num_hidden_layers=n_layers,
         hidden_size=d_model,
@@ -61,7 +62,7 @@ def _load_from_checkpoint(
         max_position_embeddings=max_positions + 2,
         tie_word_embeddings=False,
         pad_token_id=padding_idx,
-        **config_with_hyperparams
+        **config
     )
 
     model = model_cls(bert_config)
@@ -345,13 +346,13 @@ def load_musicbert_token_classifier_from_fairseq_checkpoint(
 
 
 def load_musicbert_multitask_token_classifier_from_fairseq_checkpoint(
-    hyperparams_config,
     checkpoint_path: str,
     print_missing_keys: bool = False,
     checkpoint_type: Literal["musicbert", "token_classifier"] = "token_classifier",
     num_labels: list[int] | None = None,
     weights_only: bool = False,
     vocab_paths: dict[str, str] | None = None,
+    hyperparams_config: dict[str, str] | None = None,
     **config_kwargs,
 ) -> MusicBertMultiTaskTokenClassification:
     ckpt_state_dict = torch.load(checkpoint_path, weights_only=weights_only)
@@ -598,26 +599,3 @@ def load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_che
             model.config.multitask_id2label[target] = {v: k for k, v in stoi.items()}
     return model
 
-def create_hyperparams_dict(targets, params):
-    hyperparams_dict = {}
-    for target in (targets):
-        target_params = {}
-        # First choose num_linear_layers to use in later loops
-        target_params["num_linear_layers"] =  params[f"num_linear_layers_{target}"]
-        num_layers = target_params["num_linear_layers"]
-        target_params["linear_layers_dim"]  = [
-                params[f"layer_dim_{target}_{i}"] for i in range(num_layers)
-        ]
-        # Activation function per layer
-        target_params["activation_fn"] = [ 
-             params[f"activation_fn_{target}_{i}"] for i in range(num_layers)
-        ]
-        # Dropout per layer
-        target_params["pooler_dropout"] = [
-             params[f"pooler_dropout_{target}_{i}"] for i in range(num_layers)
-        ]
-        target_params["normalisation"] = [
-            params[f"normalisation_{target}_{i}"] for i in range(num_layers)
-        ]
-        hyperparams_dict[target] = target_params
-    return hyperparams_dict

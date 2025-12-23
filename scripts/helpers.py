@@ -77,7 +77,7 @@ def create_hyperparams_dict(targets, params):
         target_params["activation_fn"] = [ 
              params[f"activation_fn_{target}_{i}"] for i in range(num_layers)
         ]
-        target_params["input_dropout"] = params[f"input_dropout_{target}"]
+        target_params["input_dropout"] =0 #params[f"input_dropout_{target}"]
         # Dropout per layer
         target_params["pooler_dropout"] = [
              params[f"pooler_dropout_{target}_{i}"] for i in range(num_layers)
@@ -106,3 +106,21 @@ def load_baseline_params(targets):
         target_params["normalisation"] = ["none"]*2
         hyperparams_dict[target] = target_params
     return hyperparams_dict
+
+class LimitedDataset:
+    def __init__(self, base_dataset, limit):
+        self.base_dataset = base_dataset
+        self.limit = limit
+
+        # Copy over needed attributes
+        self.vocab_sizes = base_dataset.vocab_sizes
+        self.stois = base_dataset.stois
+        self.conditioning_vocab_size = getattr(base_dataset, "conditioning_vocab_size", None)
+
+    def __getitem__(self, index):
+        if index >= self.limit:
+            raise IndexError("Index out of range for LimitedDataset")
+        return self.base_dataset[index]
+
+    def __len__(self):
+        return min(self.limit, len(self.base_dataset))

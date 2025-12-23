@@ -23,34 +23,18 @@ from pathlib import Path
 import optuna
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from helpers import _load_yaml_, get_best_params_from_dict, load_baseline_params, set_seed, LimitedDataset, create_hyperparams_dict
 
 from musicbert_hf.checkpoints import (
     load_musicbert_multitask_token_classifier_from_fairseq_checkpoint,
     load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint,
     load_musicbert_token_classifier_from_fairseq_checkpoint,
-    create_hyperparams_dict
+    
 )
 from musicbert_hf.data import HDF5Dataset, collate_for_musicbert_fn
 from musicbert_hf.metrics import compute_metrics, compute_metrics_multitask
 from musicbert_hf.models import freeze_layers, MusicBertTokenClassification, MusicBertMultiTaskTokenClassification
 
-class LimitedDataset:
-    def __init__(self, base_dataset, limit):
-        self.base_dataset = base_dataset
-        self.limit = limit
-
-        # Copy over needed attributes
-        self.vocab_sizes = base_dataset.vocab_sizes
-        self.stois = base_dataset.stois
-        self.conditioning_vocab_size = getattr(base_dataset, "conditioning_vocab_size", None)
-
-    def __getitem__(self, index):
-        if index >= self.limit:
-            raise IndexError("Index out of range for LimitedDataset")
-        return self.base_dataset[index]
-
-    def __len__(self):
-        return min(self.limit, len(self.base_dataset))
 
 @dataclass
 class Config:
@@ -79,6 +63,7 @@ class Config:
     seed: int = 42
     conditioning: bool = False
     data_dir_for_metadata: str = None
+    baseline: bool = False
 
     @property
     def train_dir(self) -> str:
@@ -372,26 +357,21 @@ def main(args):
    
     target_names = args.targets
 
-    median_pruner = optuna.pruners.MedianPruner(n_warmup_steps=0)
-   
-    sampler = optuna.samplers.TPESampler(seed=args.seed, 
-                                         multivariate=True,
-                                         warn_independent_sampling=False)
-    study = optuna.create_study(study_name="nas_layers_extended_new",
-                                # in case of 4 classification tasks
-                                directions= ["maximize", "maximize","maximize", "maximize"],
-                                sampler = sampler,
-                                pruner = median_pruner,
-                                storage = "sqlite:///optuna_nas.db",
-                                load_if_exists=True )
-    
 
-    best_trials = study.best_trials
-    params = best_trials[3].params    # 0 is trial 35, 3 is 58
-    print("evaluating the model from hf")
-    hyperparams_dict = create_hyperparams_dict(args.targets, params)
     
-    path = Path("/hpcwork/ui556004/results/nas_layers_extended_new/trial_0058/checkpoint-34000")
+    
+    if args.baseline:
+        print("loading baseline parameters")
+        hyperparams_dict = load_baseline_params(args.targets)
+    else:
+        print("evaluating the model from hpo")
+        study = optuna.load_study(study_name="nas_layers_extended_new",                
+                                storage = "sqlite:///optuna_nas.db")
+        best_trials = study.best_trials
+        params = best_trials[3].params    # 0 is trial 35, 3 is 58
+        hyperparams_dict = create_hyperparams_dict(args.targets, params)
+    
+    path = Path(args.checkpoint)
     config = BertConfig.from_pretrained(path, force_download=True) # this ensures that the most
                                                                                 # up-to-date model is loaded (polina)
     config.hyperparams =hyperparams_dict
@@ -423,7 +403,7 @@ def main(args):
         compute_metrics_fn = partial(
             compute_metrics_multitask,
             task_names=list(args.targets),
-            multitask_id2label=model.config.multitask_id2label,
+            #multitask_id2label=model.config.multitask_id2label,
         )
     else:
         compute_metrics_fn = compute_metrics
@@ -435,7 +415,7 @@ def main(args):
         compute_metrics=compute_metrics_fn,
     )
 
-    print("Evaluating best model on test set...")
+    print("Evaluating model on test set...")
     #test_trainer.evaluate()
     predict_and_save_hf_multitask(
     trainer=test_trainer,

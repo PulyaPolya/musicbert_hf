@@ -45,6 +45,7 @@ import torch
 from pathlib import Path
 
 from omegaconf import OmegaConf
+from typing import List, Optional
 from transformers import Trainer, TrainingArguments
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -85,6 +86,7 @@ class Config:
     #   local testing we can set it manually
     job_id: str | None = None
     seed: int | None = 42
+    name: Optional[str] = None
 
     def __post_init__(self):
         assert self.num_epochs is not None or self.max_steps is not None, (
@@ -140,21 +142,6 @@ def get_dataset(config, split):
         conditioning_path=config.conditioning_path(split),
     )
     return dataset
-
-
-# def get_config_and_training_kwargs(config_path = None):
-#     if config_path:
-#         file_conf = OmegaConf.load(config_path)
-#     else:
-#         file_conf = OmegaConf.create()  
-#     cli_conf = OmegaConf.from_cli(sys.argv[1:])
-#     # Merge file config with command-line overrides, with CLI taking precedence
-#     conf = OmegaConf.merge(file_conf, cli_conf)
-#     config_fields = set(Config.__dataclass_fields__.keys())
-#     config_kwargs = {k: v for k, v in conf.items() if k in config_fields}
-#     training_kwargs = {k: v for k, v in conf.items() if k not in config_fields}
-#     config = Config(**config_kwargs)  # type:ignore
-#     return config, training_kwargs
 
 def load_config(path: str | os.PathLike) -> Config:
     p = Path(path)
@@ -261,7 +248,7 @@ if __name__ == "__main__":
     )
     if config.wandb_project:
         training_kwargs["report_to"] = "wandb"
-        wandb.init(project="musicbert", name="baseline_model",  config=config, reinit= True)
+        wandb.init(project="musicbert", name=config.name,  config=config, reinit= True)
     else:
         training_kwargs["report_to"] = None
 

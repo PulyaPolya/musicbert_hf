@@ -55,7 +55,7 @@ import wandb
 from torch.utils.data import DataLoader
 import pickle
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from helpers import _load_yaml_, get_best_params_from_dict, set_seed
+from helpers import _load_yaml_, get_best_params_from_dict, set_seed, LimitedDataset
 
 from musicbert_hf.checkpoints import (
     load_musicbert_multitask_token_classifier_from_fairseq_checkpoint,
@@ -67,25 +67,6 @@ from musicbert_hf.metrics import compute_metrics, compute_metrics_multitask
 from musicbert_hf.models import freeze_layers, MusicBertTokenClassification, MusicBertMultiTaskTokenClassification
 from optuna.pruners import MedianPruner, BasePruner
 
-
-
-class LimitedDataset:
-    def __init__(self, base_dataset, limit):
-        self.base_dataset = base_dataset
-        self.limit = limit
-
-        # Copy over needed attributes
-        self.vocab_sizes = base_dataset.vocab_sizes
-        self.stois = base_dataset.stois
-        self.conditioning_vocab_size = getattr(base_dataset, "conditioning_vocab_size", None)
-
-    def __getitem__(self, index):
-        if index >= self.limit:
-            raise IndexError("Index out of range for LimitedDataset")
-        return self.base_dataset[index]
-
-    def __len__(self):
-        return min(self.limit, len(self.base_dataset))
 gpu = torch.cuda.is_available()
 
 @dataclass

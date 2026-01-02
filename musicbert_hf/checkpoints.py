@@ -452,6 +452,7 @@ def load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_che
     z_vocab_size: int | None = None,
     weights_only: bool = False,
     vocab_paths: dict[str, str] | None = None,
+    hyperparams_config: dict[str, str] | None = None,
     **config_kwargs,
 ) -> MusicBertMultiTaskTokenClassConditioned:
     ckpt_state_dict = torch.load(checkpoint_path, weights_only=weights_only)
@@ -577,6 +578,7 @@ def load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_che
         model_cls=MusicBertMultiTaskTokenClassConditioned,  # type:ignore
         print_missing_keys=print_missing_keys,
         parameter_mapping=parameter_mapping,
+        hyperparameter_config = hyperparams_config,
         expected_missing_src_keys=expected_missing_src_keys,
         expected_missing_dst_keys=expected_missing_dst_keys,
         classifier_dropout=classifier_dropout,

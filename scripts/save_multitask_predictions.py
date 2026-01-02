@@ -23,7 +23,7 @@ from pathlib import Path
 import optuna
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from helpers import _load_yaml_, get_best_params_from_dict, load_baseline_params, set_seed, LimitedDataset, create_hyperparams_dict
+from helpers import _load_yaml_, get_best_params_from_dict, load_baseline_params, set_seed, LimitedDataset, create_hyperparams_dict, get_dataset
 
 from musicbert_hf.checkpoints import (
     load_musicbert_multitask_token_classifier_from_fairseq_checkpoint,
@@ -33,7 +33,7 @@ from musicbert_hf.checkpoints import (
 )
 from musicbert_hf.data import HDF5Dataset, collate_for_musicbert_fn
 from musicbert_hf.metrics import compute_metrics, compute_metrics_multitask
-from musicbert_hf.models import freeze_layers, MusicBertTokenClassification, MusicBertMultiTaskTokenClassification
+from musicbert_hf.models import freeze_layers, MusicBertTokenClassification, MusicBertMultiTaskTokenClassification, MusicBertMultiTaskTokenClassConditioned
 
 
 @dataclass
@@ -61,7 +61,7 @@ class Config:
     msdebug: bool = False
     overwrite: bool = False
     seed: int = 42
-    conditioning: bool = False
+    conditioning: str | None = None
     data_dir_for_metadata: str = None
     baseline: bool = False
 
@@ -120,17 +120,7 @@ def load_config(path: str | os.PathLike) -> Config:
         raise ValueError(f"Unknown config keys: {sorted(unknown)}")
     return Config(**data)
 
-def get_dataset(config, split):
-    data_dir = getattr(config, f"{split}_dir")
-    device = torch.device("cpu")
-    print(f"loading to device {device}")
-    dataset = HDF5Dataset(
-        os.path.join(data_dir, "events.h5"),
-        config.target_paths(split),
-        conditioning_path=config.conditioning_path(split),
-        device = device
-    )
-    return dataset
+
 
 def _ensure_dir_clean(path: str, overwrite: bool):
     if os.path.exists(path):
@@ -375,12 +365,14 @@ def main(args):
     config = BertConfig.from_pretrained(path, force_download=True) # this ensures that the most
                                                                                 # up-to-date model is loaded (polina)
     config.hyperparams =hyperparams_dict
-
-    model = MusicBertMultiTaskTokenClassification.from_pretrained(pretrained_model_name_or_path =path, config=config) 
+    if args.conditioning:
+        model = MusicBertMultiTaskTokenClassConditioned.from_pretrained(pretrained_model_name_or_path =path, config=config) 
+    else:
+        model = MusicBertMultiTaskTokenClassification.from_pretrained(pretrained_model_name_or_path =path, config=config) 
 
     test_dataset = get_dataset(args, "test")
     train_dataset = get_dataset(args, "train")
-    test_dataset = LimitedDataset(test_dataset, limit=  10)
+    #test_dataset = LimitedDataset(test_dataset, limit=  10)
     model.config.multitask_label2id = train_dataset.stois
     model.config.multitask_id2label = {
         target: {v: k for k, v in train_dataset.stois[target].items()}

@@ -337,8 +337,8 @@ class RobertaSequenceTaggingHead(nn.Module):
         #self.dropout = nn.Dropout(p=pooler_dropout)
 
         layers = []
+        self.input_dropout = nn.Dropout(p=input_dropout)
         layers.append(nn.Sequential(
-            nn.Dropout(p=input_dropout),
             nn.Linear(input_dim, linear_layers_dim[0]),
             self.activation_function_mapping[activation_fns[0]],
             nn.Dropout(p=pooler_dropout[0]),
@@ -378,6 +378,7 @@ class RobertaSequenceTaggingHead(nn.Module):
 
     def forward(self, features, **kwargs):
         x = features
+        x = self.input_dropout(features)
         # TODO: (Malcolm 2023-09-05)
         # https://github.com/facebookresearch/fairseq/pull/1709/files#r381391530
         # Would it make sense to add layer_norm here just like in the RobertaLMHead?
@@ -861,8 +862,9 @@ class MusicBertMultiTaskTokenClassConditioned(BertPreTrainedModel):
             # although it probably doesn't matter too much.
             inner_dim=self.output_dim,
             num_classes=config.num_multi_labels,
-            activation_fn=config.classifier_activation,
-            pooler_dropout=classifier_dropout,
+            config = config
+           # activation_fn=config.classifier_activation,
+            #pooler_dropout=classifier_dropout,
         )
 
         # Initialize weights and apply final processing

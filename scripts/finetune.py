@@ -59,80 +59,84 @@ from musicbert_hf.checkpoints import (
 from musicbert_hf.data import HDF5Dataset, collate_for_musicbert_fn
 from musicbert_hf.metrics import compute_metrics, compute_metrics_multitask
 from musicbert_hf.models import freeze_layers
+from config import load_config
 
 
-@dataclass
-class Config:
-    # data_dir should have train, valid, and test subdirectories
-    data_dir: str
-    output_dir_base: str
-    checkpoint_path: str
-    targets: str | list[str]
-    conditioning: str | None = None
-    log_dir: str = os.path.expanduser("~/tmp/musicbert_hf_logs")
-    # We will always load from a checkpoint so we don't need to specify architecture
-    # architecture: Literal["base", "tiny"] = "base"
-    num_epochs: int = 0
-    batch_size: int = 4
-    learning_rate: float = 2.5e-4
-    warmup_steps: int = 0
-    max_steps: int = -1
-    wandb_project: str | None = None
-    # If None, freeze no layers; if int, freeze all layers up to and including
-    #   the specified layer; if sequence of ints, freeze the specified layers
-    freeze_layers: int | Sequence[int] | None = None
+# @dataclass
+# class Config:
+#     # data_dir should have train, valid, and test subdirectories
+#     data_dir: str
+#     output_dir_base: str
+#     checkpoint_path: str
+#     targets: str | list[str]
+#     conditioning: str | None = None
+#     log_dir: str = os.path.expanduser("~/tmp/musicbert_hf_logs")
+#     # We will always load from a checkpoint so we don't need to specify architecture
+#     # architecture: Literal["base", "tiny"] = "base"
+#     num_epochs: int = 0
+#     batch_size: int = 4
+#     learning_rate: float = 2.5e-4
+#     warmup_steps: int = 0
+#     max_steps: int = -1
+#     wandb_project: str | None = None
+#     # If None, freeze no layers; if int, freeze all layers up to and including
+#     #   the specified layer; if sequence of ints, freeze the specified layers
+#     freeze_layers: int | Sequence[int] | None = None
 
-    # In general, we want to leave job_id as None and set automatically, but for
-    #   local testing we can set it manually
-    job_id: str | None = None
-    seed: int | None = 42
-    name: Optional[str] = None
+#     # In general, we want to leave job_id as None and set automatically, but for
+#     #   local testing we can set it manually
+#     job_id: str | None = None
+#     seed: int | None = 42
+#     name: Optional[str] = None
+    
 
-    def __post_init__(self):
-        assert self.num_epochs is not None or self.max_steps is not None, (
-            "Either num_epochs or max_steps must be provided"
-        )
-        if self.job_id is None:
-            self.job_id = os.environ.get("SLURM_JOB_ID", None)
-            if self.job_id is None:
-                # Use the current time as the job ID if not running on the cluster
-                self.job_id = str(int(time.time()))
+#     def __post_init__(self):
+#         assert self.num_epochs is not None or self.max_steps is not None, (
+#             "Either num_epochs or max_steps must be provided"
+#         )
+#         if self.job_id is None:
+#             self.job_id = os.environ.get("SLURM_JOB_ID", None)
+#             if self.job_id is None:
+#                 # Use the current time as the job ID if not running on the cluster
+#                 self.job_id = str(int(time.time()))
 
-        if isinstance(self.targets, str):
-            self.targets = [self.targets]
+#         if isinstance(self.targets, str):
+#             self.targets = [self.targets]
 
-    @property
-    def train_dir(self) -> str:
-        return os.path.join(self.data_dir, "train")
+#     @property
+#     def train_dir(self) -> str:
+#         return os.path.join(self.data_dir, "train")
 
-    @property
-    def valid_dir(self) -> str:
-        return os.path.join(self.data_dir, "valid")
+#     @property
+#     def valid_dir(self) -> str:
+#         return os.path.join(self.data_dir, "valid")
 
-    @property
-    def test_dir(self) -> str:
-        return os.path.join(self.data_dir, "test")
+#     @property
+#     def test_dir(self) -> str:
+#         return os.path.join(self.data_dir, "test")
 
-    @property
-    def output_dir(self) -> str:
-        return os.path.join(self.output_dir_base, self.job_id)
+#     @property
+#     def output_dir(self) -> str:
+#         if self.name is None:
+#             self.name = self.job_id
+#         return os.path.join(self.output_dir_base, self.name)
 
-    def target_paths(self, split: Literal["train", "valid", "test"]) -> list[str]:
-        return [
-            os.path.join(self.data_dir, split, f"{target}.h5")
-            for target in self.targets
-        ]
+#     def target_paths(self, split: Literal["train", "valid", "test"]) -> list[str]:
+#         return [
+#             os.path.join(self.data_dir, split, f"{target}.h5")
+#             for target in self.targets
+#         ]
 
-    def conditioning_path(self, split: Literal["train", "valid", "test"]) -> str | None:
-        return (
-            None
-            if not self.conditioning
-            else os.path.join(self.data_dir, split, f"{self.conditioning}.h5")
-        )
+#     def conditioning_path(self, split: Literal["train", "valid", "test"]) -> str | None:
+#         return (
+#             None
+#             if not self.conditioning
+#             else os.path.join(self.data_dir, split, f"{self.conditioning}.h5")
+#         )
 
-    @property
-    def multitask(self) -> bool:
-        return len(self.targets) > 1
+#     @property
+#     def multitask(self) -> bool:
+#         return len(self.targets) > 1
     
 def get_dataset(config, split):
     data_dir = getattr(config, f"{split}_dir")
@@ -143,19 +147,6 @@ def get_dataset(config, split):
     )
     return dataset
 
-def load_config(path: str | os.PathLike) -> Config:
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(f"Config file not found: {p}")
-    data = _load_yaml_(p)
-    # allow hyphenated keys in file
-    data = {k.replace("-", "_"): v for k, v in data.items()}
-    # validate keys
-    valid = set(Config.__annotations__.keys())
-    unknown = set(data) - valid
-    if unknown:
-        raise ValueError(f"Unknown config keys: {sorted(unknown)}")
-    return Config(**data)
 
 if __name__ == "__main__":
     
@@ -182,6 +173,7 @@ if __name__ == "__main__":
                     checkpoint_type="musicbert",
                     num_labels=train_dataset.vocab_sizes,
                     z_vocab_size=train_dataset.conditioning_vocab_size,
+                    hyperparams_config=hyperparams_dict
                 )
             else:
                 model = (

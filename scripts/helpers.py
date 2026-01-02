@@ -24,13 +24,8 @@ from torch.utils.data import Subset
 import wandb
 from torch.utils.data import DataLoader
 import pickle
-
-
-def _load_yaml_(path: Path) -> dict:
-    raw = path.read_text()
-    if path.suffix.lower() in (".yml", ".yaml"):
-        data = yaml.safe_load(raw) or {}
-    return data
+from musicbert_hf.data import HDF5Dataset
+from musicbert_hf.models import freeze_layers, MusicBertTokenClassification, MusicBertMultiTaskTokenClassification, MusicBertMultiTaskTokenClassConditioned
 
 def set_seed(seed=42):
     random.seed(seed)
@@ -124,3 +119,39 @@ class LimitedDataset:
 
     def __len__(self):
         return min(self.limit, len(self.base_dataset))
+
+
+def get_dataset(config, split):
+    data_dir = getattr(config, f"{split}_dir")
+    device = torch.device("cpu")
+    print(f"loading to device {device}")
+    dataset = HDF5Dataset(
+        os.path.join(data_dir, "events.h5"),
+        config.target_paths(split),
+        conditioning_path=config.conditioning_path(split),
+        device = device
+    )
+    return dataset
+
+def load_model(args):
+    if args.baseline:
+        print("loading baseline parameters")
+        hyperparams_dict = load_baseline_params(args.targets)
+    else:
+        print("evaluating the model from hpo")
+        study = optuna.load_study(study_name= args.study_name,                
+                                storage = args.storage)
+        #best_trials = study.best_trials
+        trial= study.trials[args.trial_number]
+        params = trial.params    # 0 is trial 35, 3 is 58
+        hyperparams_dict = create_hyperparams_dict(args.targets, params)
+    
+    path = Path(args.checkpoint_path)
+    config = BertConfig.from_pretrained(path, force_download=True) # this ensures that the most
+                                                                                # up-to-date model is loaded (polina)
+    config.hyperparams =hyperparams_dict
+    if args.conditioning:
+        model = MusicBertMultiTaskTokenClassConditioned.from_pretrained(pretrained_model_name_or_path =path, config=config) 
+    else:
+        model = MusicBertMultiTaskTokenClassification.from_pretrained(pretrained_model_name_or_path =path, config=config) 
+    return model, config

@@ -55,7 +55,7 @@ import wandb
 from torch.utils.data import DataLoader
 import pickle
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from helpers import _load_yaml_, get_best_params_from_dict, set_seed, LimitedDataset
+from helpers import  get_best_params_from_dict, set_seed, LimitedDataset, get_dataset
 
 from musicbert_hf.checkpoints import (
     load_musicbert_multitask_token_classifier_from_fairseq_checkpoint,
@@ -66,7 +66,7 @@ from musicbert_hf.data import HDF5Dataset, collate_for_musicbert_fn
 from musicbert_hf.metrics import compute_metrics, compute_metrics_multitask
 from musicbert_hf.models import freeze_layers, MusicBertTokenClassification, MusicBertMultiTaskTokenClassification
 from optuna.pruners import MedianPruner, BasePruner
-
+from config import load_config
 gpu = torch.cuda.is_available()
 
 @dataclass
@@ -107,6 +107,7 @@ class Config:
     sampler_path: str | None = None
     # setting seed for reproducability
     seed : int | None = None
+    optuna_storage: str | None = None
 
     def __post_init__(self):
         assert self.num_epochs is not None or self.max_steps is not None, (
@@ -180,17 +181,7 @@ class SaveSamplerCallback:
         with open(self.filename, "wb") as fout:
             pickle.dump(study.sampler, fout)
 
-def get_dataset(config, split):
-    data_dir = getattr(config, f"{split}_dir")
-    device = torch.device("cpu")
-    print(f"loading to device {device}")
-    dataset = HDF5Dataset(
-        os.path.join(data_dir, "events.h5"),
-        config.target_paths(split),
-        conditioning_path=config.conditioning_path(split),
-        device = device
-    )
-    return dataset
+
 def load_config(path: str | os.PathLike) -> Config:
     p = Path(path)
     if not p.exists():
@@ -311,6 +302,7 @@ def make_objective(config, train_dataset, valid_dataset):
                     checkpoint_type="musicbert",
                     num_labels=train_dataset.vocab_sizes,
                     z_vocab_size=train_dataset.conditioning_vocab_size,
+                    hyperparams_config=hyperparams_dict
                 )
             else:
                 # so far nas works only for this case
@@ -391,12 +383,9 @@ def make_objective(config, train_dataset, valid_dataset):
             compute_metrics_multitask, task_names=config.targets, #multitask_id2label = model.config.multitask_id2label
         ) if config.multitask else compute_metrics
         if config.wandb_name:
-            if config.RUN_NAS:
-                name = f"trial_{trial.number}"
-                group= config.wandb_name
-            else:
-                name = config.wandb_name
-                group = None
+         
+            name = f"trial_{trial.number}"
+            group= config.wandb_name
             wandb.init(project="musicbert", name=name, group=group, config=hyperparams_dict, reinit= True)
             wandb.config.update({"seed": config.seed}, allow_val_change=True)
         trainer = Trainer(
@@ -457,15 +446,12 @@ if __name__ == "__main__":
                                 directions= ["maximize", "maximize","maximize", "maximize"],
                                 sampler = sampler,
                                 pruner = median_pruner,
-                                storage = "sqlite:///0optuna_nas.db",
+                                storage = f"sqlite:///{config.optuna_storage}.db",
                                 load_if_exists=True )
-    if config.RUN_NAS:
-        study.optimize(make_objective(config, train_dataset, valid_dataset), n_trials=config.num_trials, callbacks=[SaveSamplerCallback(f"sampler_{config.optuna_name}.pkl")])
-        with open(f"sampler_{config.optuna_name}.pkl", "wb") as fout:
-            pickle.dump(study.sampler, fout)
-    elif config.baseline:
-        # run baseline model
-        pass
+
+    study.optimize(make_objective(config, train_dataset, valid_dataset), n_trials=config.num_trials, callbacks=[SaveSamplerCallback(f"sampler_{config.optuna_name}.pkl")])
+    with open(f"sampler_{config.optuna_name}.pkl", "wb") as fout:
+        pickle.dump(study.sampler, fout)
 
     
     # else:

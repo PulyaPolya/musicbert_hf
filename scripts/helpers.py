@@ -20,6 +20,7 @@ import pandas as pd
 import yaml
 from transformers import EarlyStoppingCallback, TrainerCallback
 #from transformers import T
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from torch.utils.data import Subset
 import wandb
 from torch.utils.data import DataLoader
@@ -139,8 +140,8 @@ def load_model(args):
         hyperparams_dict = load_baseline_params(args.targets)
     else:
         print("evaluating the model from hpo")
-        study = optuna.load_study(study_name= args.study_name,                
-                                storage = args.storage)
+        study = optuna.load_study(study_name= args.optuna_name,                
+                                storage = args.optuna_storage)
         #best_trials = study.best_trials
         trial= study.trials[args.trial_number]
         params = trial.params    # 0 is trial 35, 3 is 58

@@ -23,102 +23,95 @@ from pathlib import Path
 import optuna
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from helpers import _load_yaml_, get_best_params_from_dict, load_baseline_params, set_seed, LimitedDataset, create_hyperparams_dict, get_dataset
-
-from musicbert_hf.checkpoints import (
-    load_musicbert_multitask_token_classifier_from_fairseq_checkpoint,
-    load_musicbert_multitask_token_classifier_with_conditioning_from_fairseq_checkpoint,
-    load_musicbert_token_classifier_from_fairseq_checkpoint,
-    
-)
+from helpers import load_baseline_params, create_hyperparams_dict, get_dataset, load_model, LimitedDataset
 from musicbert_hf.data import HDF5Dataset, collate_for_musicbert_fn
 from musicbert_hf.metrics import compute_metrics, compute_metrics_multitask
 from musicbert_hf.models import freeze_layers, MusicBertTokenClassification, MusicBertMultiTaskTokenClassification, MusicBertMultiTaskTokenClassConditioned
+from config import load_config
 
-
-@dataclass
-class Config:
-    data_dir: str  # assumed to end in '_bin' and have an equivalent '_raw' with 'metadata_test.txt'
-    checkpoint: str  # path to model checkpoint
-    output_folder: str  # where predictions will be stored
-    targets: str | list[str]
-    ref_dir: Optional[str] = None  # contains target_names.json and label[x]/dict.txt
+# @dataclass
+# class Config:
+#     data_dir: str  # assumed to end in '_bin' and have an equivalent '_raw' with 'metadata_test.txt'
+#     checkpoint: str  # path to model checkpoint
+#     output_folder: str  # where predictions will be stored
+#     targets: str | list[str]
+#     ref_dir: Optional[str] = None  # contains target_names.json and label[x]/dict.txt
     
 
-    # Dataset and batching
-    dataset: str = "test"  # choices: test, valid, train
-    batch_size: int = 4
-    max_examples: Optional[int] = None
+#     # Dataset and batching
+#     dataset: str = "test"  # choices: test, valid, train
+#     batch_size: int = 4
+#     max_examples: Optional[int] = None
     
 
-    # Model/task parameters
-    compound_token_ratio: int = 8
-    ignore_specials: int = 4
-    task: str = "musicbert_multitask_sequence_tagging"
-    head: str = "sequence_multitask_tagging_head"
+#     # Model/task parameters
+#     compound_token_ratio: int = 8
+#     ignore_specials: int = 4
+#     task: str = "musicbert_multitask_sequence_tagging"
+#     head: str = "sequence_multitask_tagging_head"
 
-    # Misc
-    msdebug: bool = False
-    overwrite: bool = False
-    seed: int = 42
-    conditioning: str | None = None
-    data_dir_for_metadata: str = None
-    baseline: bool = False
+#     # Misc
+#     msdebug: bool = False
+#     overwrite: bool = False
+#     seed: int = 42
+#     conditioning: str | None = None
+#     data_dir_for_metadata: str = None
+#     baseline: bool = False
 
-    @property
-    def train_dir(self) -> str:
-        return os.path.join(self.data_dir, "train")
+#     @property
+#     def train_dir(self) -> str:
+#         return os.path.join(self.data_dir, "train")
 
-    @property
-    def valid_dir(self) -> str:
-        return os.path.join(self.data_dir, "valid")
+#     @property
+#     def valid_dir(self) -> str:
+#         return os.path.join(self.data_dir, "valid")
 
-    @property
-    def test_dir(self) -> str:
-        return os.path.join(self.data_dir, "test")
+#     @property
+#     def test_dir(self) -> str:
+#         return os.path.join(self.data_dir, "test")
     
-    @property
-    def output_dir(self) -> str:
-        return os.path.join(self.output_dir_base, self.job_id)
+#     @property
+#     def output_dir(self) -> str:
+#         return os.path.join(self.output_dir_base, self.job_id)
 
-    def target_paths(self, split: Literal["train", "valid", "test"]) -> list[str]:
-        return [
-            os.path.join(self.data_dir, split, f"{target}.h5")
-            for target in self.targets
-        ]
+#     def target_paths(self, split: Literal["train", "valid", "test"]) -> list[str]:
+#         return [
+#             os.path.join(self.data_dir, split, f"{target}.h5")
+#             for target in self.targets
+#         ]
 
-    def conditioning_path(self, split: Literal["train", "valid", "test"]) -> str | None:
-        return (
-            None
-            if not self.conditioning
-            else os.path.join(self.data_dir, split, f"{self.conditioning}.h5")
-        )
+#     def conditioning_path(self, split: Literal["train", "valid", "test"]) -> str | None:
+#         return (
+#             None
+#             if not self.conditioning
+#             else os.path.join(self.data_dir, split, f"{self.conditioning}.h5")
+#         )
 
-    @property
-    def multitask(self) -> bool:
-        return len(self.targets) > 1
+#     @property
+#     def multitask(self) -> bool:
+#         return len(self.targets) > 1
 
 
 
-def _load_yaml(path: Path) -> dict:
-    raw = path.read_text()
-    if path.suffix.lower() in (".yml", ".yaml"):
-        data = yaml.safe_load(raw) or {}
-    return data
+# def _load_yaml(path: Path) -> dict:
+#     raw = path.read_text()
+#     if path.suffix.lower() in (".yml", ".yaml"):
+#         data = yaml.safe_load(raw) or {}
+#     return data
 
-def load_config(path: str | os.PathLike) -> Config:
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(f"Config file not found: {p}")
-    data = _load_yaml(p)
-    # allow hyphenated keys in file
-    data = {k.replace("-", "_"): v for k, v in data.items()}
-    # validate keys
-    valid = set(Config.__annotations__.keys())
-    unknown = set(data) - valid
-    if unknown:
-        raise ValueError(f"Unknown config keys: {sorted(unknown)}")
-    return Config(**data)
+# def load_config(path: str | os.PathLike) -> Config:
+#     p = Path(path)
+#     if not p.exists():
+#         raise FileNotFoundError(f"Config file not found: {p}")
+#     data = _load_yaml(p)
+#     # allow hyphenated keys in file
+#     data = {k.replace("-", "_"): v for k, v in data.items()}
+#     # validate keys
+#     valid = set(Config.__annotations__.keys())
+#     unknown = set(data) - valid
+#     if unknown:
+#         raise ValueError(f"Unknown config keys: {sorted(unknown)}")
+#     return Config(**data)
 
 
 
@@ -152,7 +145,7 @@ def predict_and_save_hf_multitask(
     overwrite: bool = False,
     ignore_specials: int = 4,
     compound_token_ratio: int = 8,
-    trim_bos_eos: bool = False,
+    trim_bos_eos: bool = True,
 ):
     """
     Saves:
@@ -166,6 +159,9 @@ def predict_and_save_hf_multitask(
     # 1) Run prediction (no metrics)
     
     outputs = trainer.predict(dataset, metric_key_prefix="test")
+    for k, v in outputs.metrics.items():
+        print(f"{k}: {v:.4f}")
+
     logits_all = outputs.predictions  # could be np.ndarray or dict[target] -> np.ndarray
     # Also collect attention masks to compute valid lengths
     # Trainer doesn't return inputs, so pull from dataset directly
@@ -328,8 +324,8 @@ def main(args):
     data_dir, ref_dir, checkpoint, output_folder_base = (
         args.data_dir,
         args.ref_dir,
-        args.checkpoint,
-        args.output_folder,
+        args.checkpoint_path,
+        args.output_dir_base,
     )
     if ref_dir is None:
         ref_dir = data_dir
@@ -350,35 +346,44 @@ def main(args):
 
     
     
-    if args.baseline:
-        print("loading baseline parameters")
-        hyperparams_dict = load_baseline_params(args.targets)
-    else:
-        print("evaluating the model from hpo")
-        study = optuna.load_study(study_name="nas_layers_extended_new",                
-                                storage = "sqlite:///optuna_nas.db")
-        best_trials = study.best_trials
-        params = best_trials[3].params    # 0 is trial 35, 3 is 58
-        hyperparams_dict = create_hyperparams_dict(args.targets, params)
+    # if args.baseline:
+    #     print("loading baseline parameters")
+    #     hyperparams_dict = load_baseline_params(args.targets)
+    # else:
+        # print("evaluating the model from hpo")
+        # study = optuna.load_study(study_name="nas_layers_extended_new",                
+        #                         storage = "sqlite:///optuna_nas.db")
+        # best_trials = study.best_trials
+        # params = best_trials[3].params    # 0 is trial 35, 3 is 58
+        # hyperparams_dict = create_hyperparams_dict(args.targets, params)
     
-    path = Path(args.checkpoint)
-    config = BertConfig.from_pretrained(path, force_download=True) # this ensures that the most
-                                                                                # up-to-date model is loaded (polina)
-    config.hyperparams =hyperparams_dict
-    if args.conditioning:
-        model = MusicBertMultiTaskTokenClassConditioned.from_pretrained(pretrained_model_name_or_path =path, config=config) 
-    else:
-        model = MusicBertMultiTaskTokenClassification.from_pretrained(pretrained_model_name_or_path =path, config=config) 
+    # path = Path(args.checkpoint_path)
+    # config = BertConfig.from_pretrained(path, force_download=True) # this ensures that the most
+    #                                                                             # up-to-date model is loaded (polina)
+    # config.hyperparams =hyperparams_dict
+    model, config = load_model(args)
+    # if args.conditioning:
+    #     model = MusicBertMultiTaskTokenClassConditioned.from_pretrained(pretrained_model_name_or_path =path, config=config) 
+    # else:
+    #     model = MusicBertMultiTaskTokenClassification.from_pretrained(pretrained_model_name_or_path =path, config=config) 
 
     test_dataset = get_dataset(args, "test")
+    # train_dataset = get_dataset(args, "train")
+    #test_dataset = LimitedDataset(test_dataset, limit=  2)
+    # model.config.multitask_label2id = train_dataset.stois
+    # model.config.multitask_id2label = {
+    #     target: {v: k for k, v in train_dataset.stois[target].items()}
+    #     for target in train_dataset.stois
+    # }
+    model.config.targets = list(args.targets)
     train_dataset = get_dataset(args, "train")
     #test_dataset = LimitedDataset(test_dataset, limit=  10)
-    model.config.multitask_label2id = train_dataset.stois
+    model.config.multitask_lgitabel2id = train_dataset.stois
     model.config.multitask_id2label = {
         target: {v: k for k, v in train_dataset.stois[target].items()}
         for target in train_dataset.stois
     }
-    model.config.targets = list(args.targets)
+    
     
     test_args = TrainingArguments(
     #output_dir=best_model_dir,
@@ -414,7 +419,7 @@ def main(args):
     model=model,
     dataset=test_dataset,
     config_params=args,
-    output_folder=args.output_folder,             # like --output-folder
+    output_folder=args.output_dir_base,             # like --output-folder
     dataset_name="test",                        # "test" | "valid" | "train"
     data_dir_for_metadata=args.data_dir_for_metadata,  # so we can copy metadata_<dataset>.txt
     overwrite=True,

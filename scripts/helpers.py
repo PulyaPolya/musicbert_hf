@@ -141,7 +141,7 @@ def load_model(args):
     else:
         print("evaluating the model from hpo")
         study = optuna.load_study(study_name= args.optuna_name,                
-                                storage = args.optuna_storage)
+                                storage =f"sqlite:///{args.optuna_storage}.db")
         #best_trials = study.best_trials
         trial= study.trials[args.trial_number]
         params = trial.params    # 0 is trial 35, 3 is 58

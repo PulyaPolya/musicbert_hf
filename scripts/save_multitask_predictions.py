@@ -368,13 +368,6 @@ def main(args):
     #     model = MusicBertMultiTaskTokenClassification.from_pretrained(pretrained_model_name_or_path =path, config=config) 
 
     test_dataset = get_dataset(args, "test")
-    # train_dataset = get_dataset(args, "train")
-    #test_dataset = LimitedDataset(test_dataset, limit=  2)
-    # model.config.multitask_label2id = train_dataset.stois
-    # model.config.multitask_id2label = {
-    #     target: {v: k for k, v in train_dataset.stois[target].items()}
-    #     for target in train_dataset.stois
-    # }
     model.config.targets = list(args.targets)
     train_dataset = get_dataset(args, "train")
     #test_dataset = LimitedDataset(test_dataset, limit=  10)

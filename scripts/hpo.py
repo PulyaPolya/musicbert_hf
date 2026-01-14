@@ -69,91 +69,6 @@ from optuna.pruners import MedianPruner, BasePruner
 from config import load_config
 gpu = torch.cuda.is_available()
 
-@dataclass
-class Config:
-    # data_dir should have train, valid, and test subdirectories
-    data_dir: str
-    output_dir_base: str
-    checkpoint_path: str
-    targets: str | list[str]
-    conditioning: str | None = None
-    log_dir: str = os.path.expanduser("logs/musicbert_hf_logs")
-    # We will always load from a checkpoint so we don't need to specify architecture
-    # architecture: Literal["base", "tiny"] = "base"
-    num_epochs: int = 0
-    batch_size: int = 4
-    num_workers: int = 4
-    learning_rate: float = 2.5e-4
-    warmup_steps: int = 0
-    max_steps: int = -1
-    wandb_project: str | None = None
-    wandb_name: str | None = None
-    optuna_name: str | None = None
-    # time limit for each trial in the optuna run
-    time_limit : int | None = None
-    # If None, freeze all layers; if int, freeze all layers up to and including
-    #   the specified layer; if sequence of ints, freeze the specified layers
-    freeze_layers: int | Sequence[int] | None = None
-    # In general, we want to leave job_id as None and set automatically, but for
-    #   local testing we can set it manually
-    job_id: str | None = None
-    hf_repository: str | None = None
-    hf_token: str | None = None
-    DEBUG: bool = True
-    RUN_NAS : bool = False
-    num_trials: int = 1
-    # for the cases when we want to continue NAS after stopping
-    # we need to save the sampler as pickle 
-    sampler_path: str | None = None
-    # setting seed for reproducability
-    seed : int | None = None
-    optuna_storage: str | None = None
-
-    def __post_init__(self):
-        assert self.num_epochs is not None or self.max_steps is not None, (
-            "Either num_epochs or max_steps must be provided"
-        )
-        if self.job_id is None:
-            self.job_id = os.environ.get("SLURM_JOB_ID", None)
-            if self.job_id is None:
-                # Use the current time as the job ID if not running on the cluster
-                self.job_id = str(int(time.time()))
-
-        if isinstance(self.targets, str):
-            self.targets = [self.targets]
-
-    @property
-    def train_dir(self) -> str:
-        return os.path.join(self.data_dir, "train")
-
-    @property
-    def valid_dir(self) -> str:
-        return os.path.join(self.data_dir, "valid")
-
-    @property
-    def test_dir(self) -> str:
-        return os.path.join(self.data_dir, "test")
-
-    @property
-    def output_dir(self) -> str:
-        return os.path.join(self.output_dir_base, self.job_id)
-
-    def target_paths(self, split: Literal["train", "valid", "test"]) -> list[str]:
-        return [
-            os.path.join(self.data_dir, split, f"{target}.h5")
-            for target in self.targets
-        ]
-
-    def conditioning_path(self, split: Literal["train", "valid", "test"]) -> str | None:
-        return (
-            None
-            if not self.conditioning
-            else os.path.join(self.data_dir, split, f"{self.conditioning}.h5")
-        )
-
-    @property
-    def multitask(self) -> bool:
-        return len(self.targets) > 1
     
 class OptunaTransformersPruningCallback(TrainerCallback):
     def __init__(self, trial, monitor="eval_loss"):
@@ -180,35 +95,6 @@ class SaveSamplerCallback:
         print(f"Saving current sampler state")
         with open(self.filename, "wb") as fout:
             pickle.dump(study.sampler, fout)
-
-
-def load_config(path: str | os.PathLike) -> Config:
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(f"Config file not found: {p}")
-    data = _load_yaml_(p)
-    # allow hyphenated keys in file
-    data = {k.replace("-", "_"): v for k, v in data.items()}
-    # validate keys
-    valid = set(Config.__annotations__.keys())
-    unknown = set(data) - valid
-    if unknown:
-        raise ValueError(f"Unknown config keys: {sorted(unknown)}")
-    return Config(**data)
-
-# def get_config_and_training_kwargs(config_path=None):
-#     if config_path:
-#         file_conf = OmegaConf.load(config_path)
-#     else:
-#         file_conf = OmegaConf.create()  
-#     cli_conf = OmegaConf.from_cli(sys.argv[1:])
-#     # Merge file config with command-line overrides, with CLI taking precedence
-#     conf = OmegaConf.merge(file_conf, cli_conf)
-#     config_fields = set(Config.__dataclass_fields__.keys())
-#     config_kwargs = {k: v for k, v in conf.items() if k in config_fields}
-#     training_kwargs = {k: v for k, v in conf.items() if k not in config_fields}
-#     config = Config(**config_kwargs)  # type:ignore
-#     return config, training_kwargs
 
 
 
@@ -362,7 +248,7 @@ def make_objective(config, train_dataset, valid_dataset):
             fp16=gpu, 
             max_steps = config.max_steps,
             load_best_model_at_end = True,
-            metric_for_best_model= "accuracy",
+            metric_for_best_model= "eval_accuracy",
             greater_is_better= True,
             save_total_limit= 1,
             save_strategy = "steps",
@@ -370,7 +256,7 @@ def make_objective(config, train_dataset, valid_dataset):
             hub_model_id = config.hf_repository,
             eval_on_start= False,
             seed = config.seed,
-            dataloader_num_workers=config.num_workers,
+            dataloader_num_workers=16,
             dataloader_pin_memory = True,
             dataloader_persistent_workers = True
         )#| training_kwargs
@@ -388,6 +274,10 @@ def make_objective(config, train_dataset, valid_dataset):
             group= config.wandb_name
             wandb.init(project="musicbert", name=name, group=group, config=hyperparams_dict, reinit= True)
             wandb.config.update({"seed": config.seed}, allow_val_change=True)
+        pruning_callback = OptunaTransformersPruningCallback(
+                trial=trial,
+                monitor="eval_accuracy",
+                )
         trainer = Trainer(
             model=model,
             args=training_args,
@@ -396,19 +286,20 @@ def make_objective(config, train_dataset, valid_dataset):
             eval_dataset=valid_dataset,
             compute_loss_func=partial(model.compute_loss),
             compute_metrics=compute_metrics_fn,
-            callbacks = [EarlyStoppingCallback(early_stopping_patience =5)]
+            callbacks = [EarlyStoppingCallback(early_stopping_patience =5),pruning_callback]
         )
         print(model.device)
         try:
             trainer.train()
             eval_result = trainer.evaluate()
             accuracies = [eval_result[f"eval_{target}_accuracy"] for target in config.targets]
+            eval_acc = eval_result[f"eval_accuracy"]
             log_dict = {f"eval_{target}_accuracy": eval_result[f"eval_{target}_accuracy"] 
             for target in config.targets}
             if config.wandb_name:
                 log_dict["seed"] = config.seed
                 wandb.log(log_dict)
-            return accuracies
+            return eval_acc
         except optuna.TrialPruned:
             print(f"Trial {trial.number} was pruned")
             raise  
@@ -433,7 +324,7 @@ if __name__ == "__main__":
         valid_dataset = LimitedDataset(valid_dataset, limit=10)
         test_dataset = LimitedDataset(test_dataset, limit=20)
 
-    median_pruner = optuna.pruners.MedianPruner(n_warmup_steps=0)
+    median_pruner = optuna.pruners.MedianPruner(n_warmup_steps=config.warmup_steps)
    
     if config.sampler_path:
         sampler = pickle.load(open(config.sampler_path,  "rb"))
@@ -443,7 +334,7 @@ if __name__ == "__main__":
                                          warn_independent_sampling=False)
     study = optuna.create_study(study_name=config.optuna_name,
                                 # in case of 4 classification tasks
-                                directions= ["maximize", "maximize","maximize", "maximize"],
+                                directions= ["maximize"],
                                 sampler = sampler,
                                 pruner = median_pruner,
                                 storage = f"sqlite:///{config.optuna_storage}.db",
@@ -453,46 +344,3 @@ if __name__ == "__main__":
     with open(f"sampler_{config.optuna_name}.pkl", "wb") as fout:
         pickle.dump(study.sampler, fout)
 
-    
-    # else:
-    #     best_trials = study.best_trials
-    #     params = best_trials[3].params    # 0 is trial 35, 3 is 58
-    #     print("evaluating the model from hf")
-    #     hyperparams_dict = create_hyperparams_dict(config.targets, params)
-        
-    #     path = Path("/hpcwork/ui556004/results/nas_layers_extended_new/trial_0058/checkpoint-34000")
-    #     config = BertConfig.from_pretrained(path, force_download=True) # this ensures that the most
-    #                                                                                 # up-to-date model is loaded (polina)
-    #     config.hyperparams =hyperparams_dict
-    #     model = MusicBertMultiTaskTokenClassification.from_pretrained(pretrained_model_name_or_path =path, config=config)   #config_dict["hf_repository"],
-    #     model.config.multitask_label2id = train_dataset.stois
-    #     model.config.multitask_id2label = {
-    #         target: {v: k for k, v in train_dataset.stois[target].items()}
-    #         for target in train_dataset.stois
-    #     }
-    #     model.config.targets = list(config.targets)
-        
-    #     test_args = TrainingArguments(
-    #     #output_dir=best_model_dir,
-    #     per_device_eval_batch_size=config.batch_size,
-    #     report_to=None,
-    #     do_train=False,
-    #     do_eval=True,
-    #     )
-        
-    #     compute_metrics_fn = partial(
-    #     compute_metrics_multitask, task_names=config.targets
-    #     ) if config.multitask else compute_metrics
-    #     del train_dataset
-    #     test_trainer = Trainer(
-    #         model=model,
-    #         args=test_args,
-    #         data_collator=partial(collate_for_musicbert_fn, multitask=config.multitask),
-    #         eval_dataset=test_dataset,
-    #         compute_metrics=compute_metrics_fn,
-    #     )
-
-    #     print("Evaluating best model on test set...")
-    #     test_results = test_trainer.evaluate()
-    #     for k, v in test_results.items():
-    #         print(f"{k}: {v:.4f}")

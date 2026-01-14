@@ -26,12 +26,14 @@ do_eval=True,
 )
 
 compute_metrics_fn = partial(
-compute_metrics_multitask, task_names=args.targets
+compute_metrics_multitask, task_names=args.targets, entropy = True
 ) if args.multitask else compute_metrics
 
 test_dataset = get_dataset(args, "test")
+prefix = ""
 if args.DEBUG:
         test_dataset = LimitedDataset(test_dataset, limit=5)
+        prefix = "DEBUG_"
 test_trainer = Trainer(
     model=model,
     args=test_args,
@@ -41,11 +43,12 @@ test_trainer = Trainer(
 )
 print("Evaluating best model on test set...")
 test_results = test_trainer.evaluate()
-type = "baseline" if args.baseline else f"hpo_{args.optuna_name}_trial_{args.trial_number}"
-output_file_name = os.path.join("outputs", f"{type}.txt")
+type = "baseline" if args.baseline else f"hpo_{args.optuna_name}_{args.optuna_storage}_trial_{args.trial_number}"
+output_file_name = os.path.join("outputs", f"{prefix}{type}.txt")
 path = Path(output_file_name)
 path.parent.mkdir(parents=True, exist_ok=True)
 with path.open("w") as f:
+    f.write(f"size of data: {len(test_dataset)}\n")
     for k, v in test_results.items():
         print(f"{k}: {v:.4f}")
         f.write(f"{k}: {v:.4f}\n")

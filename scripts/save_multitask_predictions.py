@@ -370,7 +370,13 @@ def main(args):
     test_dataset = get_dataset(args, "test")
     model.config.targets = list(args.targets)
     train_dataset = get_dataset(args, "train")
-    #test_dataset = LimitedDataset(test_dataset, limit=  10)
+    name = f"_{args.optuna_name}_trial_{args.trial_number}" if not args.baseline else "_baseline"
+    
+    if args.DEBUG: 
+        test_dataset = LimitedDataset(test_dataset, limit=  5)
+        name= "0" + name
+    output_dir = os.path.join(args.output_dir_base,name +args.name)
+    print(f"output dir is {output_dir}")
     model.config.multitask_lgitabel2id = train_dataset.stois
     model.config.multitask_id2label = {
         target: {v: k for k, v in train_dataset.stois[target].items()}
@@ -404,7 +410,7 @@ def main(args):
         eval_dataset=test_dataset,
         compute_metrics=compute_metrics_fn,
     )
-
+    
     print("Evaluating model on test set...")
     #test_trainer.evaluate()
     predict_and_save_hf_multitask(
@@ -412,7 +418,7 @@ def main(args):
     model=model,
     dataset=test_dataset,
     config_params=args,
-    output_folder=args.output_dir_base,             # like --output-folder
+    output_folder=output_dir ,             # like --output-folder
     dataset_name="test",                        # "test" | "valid" | "train"
     data_dir_for_metadata=args.data_dir_for_metadata,  # so we can copy metadata_<dataset>.txt
     overwrite=True,

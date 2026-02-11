@@ -50,7 +50,7 @@ def topk_threshold_accuracy(
     return acc
 
 
-def compute_metrics(eval_pred):
+def compute_metrics(eval_pred, entropy= False):
     logits, labels = eval_pred
     predictions = np.argmax(logits, axis=-1)
     # Remove ignored index (special tokens)
@@ -72,6 +72,39 @@ def compute_metrics(eval_pred):
     recall = recall_score(true_labels, true_predictions, average="macro")
     accuracy = accuracy_score(true_labels, true_predictions)
     acc_new = topk_threshold_accuracy(logits, labels, k=3, min_prob=0.10)
+    valid_logits = np.concatenate(
+        [
+            [logit for (logit, l) in zip(sample_logits, label) if l != -100]
+            for sample_logits, label in zip(logits, labels)
+        ],
+        axis=0
+    )  
+    if entropy:
+        k = 3
+    # top-k logits for each token
+        topk_idx = np.argpartition(valid_logits, -k, axis=-1)[:, -k:]  # (N_valid, k)
+        topk_logits = np.take_along_axis(valid_logits, topk_idx, axis=-1)  # (N_valid, k)
+
+        # softmax over top-k logits only (stable)
+        topk_logits_shifted = topk_logits - np.max(topk_logits, axis=-1, keepdims=True)
+        exp_topk = np.exp(topk_logits_shifted)
+        topk_probs = exp_topk / np.sum(exp_topk, axis=-1, keepdims=True)
+
+        eps = 1e-12
+        entropy_top3 = -np.sum(topk_probs * np.log(topk_probs + eps), axis=-1)  # (N_valid,)
+        mean_entropy_top3 = float(entropy_top3.mean())
+
+        # normalized entropy in [0, 1] where max is log(3)
+        mean_entropy_top3_norm = float(mean_entropy_top3 / np.log(k))
+
+        return {
+            "precision": precision,
+            "recall": recall,
+            "accuracy": accuracy,
+            "top3_accuracy": acc_new,
+            "entropy_top3": mean_entropy_top3,
+            "entropy_top3_norm": mean_entropy_top3_norm,
+        }
 
     return {
         "precision": precision,
@@ -81,7 +114,7 @@ def compute_metrics(eval_pred):
     }
 
 
-def compute_metrics_multitask(eval_pred, *, task_names: list[str]):
+def compute_metrics_multitask(eval_pred, *, task_names: list[str], entropy= False):
     # In multitask case:
     # - logits is a lost of np arrays, one per task, with expected
     # shape (batch_size, seq_len, num_labels_for_task)
@@ -96,7 +129,7 @@ def compute_metrics_multitask(eval_pred, *, task_names: list[str]):
     accuracies = []
     accuracies_top3 = []
     for task_name, logits, labels in zip(task_names, logits_list, labels_list):
-        task_metrics = compute_metrics((logits, labels))
+        task_metrics = compute_metrics((logits, labels), entropy=entropy)
         precisions.append(task_metrics["precision"])
         recalls.append(task_metrics["recall"])
         accuracies.append(task_metrics["accuracy"])

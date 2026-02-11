@@ -139,15 +139,17 @@ def load_model(args):
         print("loading baseline parameters")
         hyperparams_dict = load_baseline_params(args.targets)
     else:
-        print("evaluating the model from hpo")
+        storage = f"sqlite:///{args.optuna_storage}.db"
+        print(f"evaluating the model from optuna db {storage}")
         study = optuna.load_study(study_name= args.optuna_name,                
-                                storage =f"sqlite:///{args.optuna_storage}.db")
+                                storage =storage)
         #best_trials = study.best_trials
         trial= study.trials[args.trial_number]
         params = trial.params    # 0 is trial 35, 3 is 58
         hyperparams_dict = create_hyperparams_dict(args.targets, params)
-    
-    path = Path(args.checkpoint_path)
+        checkpoint_folder= os.path.join(args.checkpoint_path, args.optuna_name, f"trial_{args.trial_number}")
+        checkpoint_path = os.path.join(checkpoint_folder, os.listdir(checkpoint_folder)[0])
+    path = Path(checkpoint_path)
     config = BertConfig.from_pretrained(path, force_download=True) # this ensures that the most
                                                                                 # up-to-date model is loaded (polina)
     config.hyperparams =hyperparams_dict

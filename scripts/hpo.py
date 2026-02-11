@@ -69,6 +69,19 @@ from optuna.pruners import MedianPruner, BasePruner
 from config import load_config
 gpu = torch.cuda.is_available()
 
+class VerboseEarlyStoppingCallback(EarlyStoppingCallback):
+    def on_train_end(self, args, state, control, **kwargs):
+        if state.global_step < state.max_steps:
+            print(
+                f"[EARLY STOPPING] Triggered at step {state.global_step}, "
+                f"epoch {state.epoch:.2f}"
+            )
+
+class StopPrintCallback(TrainerCallback):
+    def on_step_end(self, args, state, control, **kwargs):
+        if control.should_training_stop:
+            print(f"[STOP] requested at global_step={state.global_step}, epoch={state.epoch}")
+        return control
     
 class OptunaTransformersPruningCallback(TrainerCallback):
     def __init__(self, trial, monitor="eval_loss"):
@@ -231,7 +244,9 @@ def make_objective(config, train_dataset, valid_dataset):
 
         # Update training kwargs with trial-specific parameters
         #max_steps = int(config.max_steps/ (config.batch_size / 4)) # making sure that the number of training steps in total is the same
-        trial_dir = os.path.join(config.output_dir_base, config.optuna_name, f"trial_{trial.number:04d}")
+        max_steps = int(config.max_steps * 4 / hyperparams_dict["batch_size"])
+        print(f"Adjusted max_steps: {max_steps} and eval_steps: {eval_steps} for batch size {hyperparams_dict['batch_size']}")
+        trial_dir = os.path.join(config.output_dir_base, config.optuna_name, f"trial_{trial.number}")
         os.makedirs(trial_dir, exist_ok=True)
         training_kwargs =(
             dict(
@@ -246,7 +261,7 @@ def make_objective(config, train_dataset, valid_dataset):
             eval_steps= eval_steps,   
             save_steps = eval_steps, 
             fp16=gpu, 
-            max_steps = config.max_steps,
+            max_steps = max_steps,
             load_best_model_at_end = True,
             metric_for_best_model= "eval_accuracy",
             greater_is_better= True,
@@ -286,12 +301,14 @@ def make_objective(config, train_dataset, valid_dataset):
             eval_dataset=valid_dataset,
             compute_loss_func=partial(model.compute_loss),
             compute_metrics=compute_metrics_fn,
-            callbacks = [EarlyStoppingCallback(early_stopping_patience =5),pruning_callback]
+            callbacks = [VerboseEarlyStoppingCallback(early_stopping_patience=10),pruning_callback]
         )
         print(model.device)
         try:
             trainer.train()
+            # return best
             eval_result = trainer.evaluate()
+            #print("EVAL KEYS:", sorted(eval_result.keys()))
             accuracies = [eval_result[f"eval_{target}_accuracy"] for target in config.targets]
             eval_acc = eval_result[f"eval_accuracy"]
             log_dict = {f"eval_{target}_accuracy": eval_result[f"eval_{target}_accuracy"] 
@@ -323,8 +340,9 @@ if __name__ == "__main__":
         train_dataset = LimitedDataset(train_dataset, limit=5)
         valid_dataset = LimitedDataset(valid_dataset, limit=10)
         test_dataset = LimitedDataset(test_dataset, limit=20)
-
-    median_pruner = optuna.pruners.MedianPruner(n_warmup_steps=config.warmup_steps)
+    n_warmup_steps = int(4000 / config.batch_size * 4)
+    print(f"Using {n_warmup_steps} warmup steps")
+    median_pruner = optuna.pruners.MedianPruner(n_warmup_steps=n_warmup_steps, n_startup_trials=5)
    
     if config.sampler_path:
         sampler = pickle.load(open(config.sampler_path,  "rb"))

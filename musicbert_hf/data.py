@@ -1,8 +1,9 @@
 import json
-
 import h5py
 import torch
 from torch.utils.data import Dataset
+import os
+import h5py
 
 from musicbert_hf.constants import INPUT_PAD, TARGET_PAD
 
@@ -154,3 +155,84 @@ class HDF5Dataset(Dataset):
             conditioning = torch.tensor(self.conditioning[f"{idx}"][()])
             out["conditioning_ids"] = conditioning
         return out
+
+
+# creating a small subset of data for testing purposes
+
+def _copy_indexed_h5(src_path: str, dst_path: str, limit: int):
+    """
+    Copies:
+      - all non-index metadata datasets (anything not named like "0","1",...)
+      - scalar num_seqs (overwritten to limit if present)
+      - indexed datasets "0"..."limit-1"
+    """
+    os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+
+    with h5py.File(src_path, "r") as src, h5py.File(dst_path, "w") as dst:
+        # copy metadata datasets (everything except numeric index keys)
+        for k in src.keys():
+            if k.isdigit():
+                continue
+            dst.create_dataset(k, data=src[k][()])
+
+        # overwrite num_seqs if present
+        if "num_seqs" in dst:
+            del dst["num_seqs"]
+        if "num_seqs" in src:
+            dst.create_dataset("num_seqs", data=min(limit, int(src["num_seqs"][()])))
+        else:
+            # if missing, still write it because your HDF5Dataset expects it in inputs
+            dst.create_dataset("num_seqs", data=min(limit, _count_index_keys(src)))
+
+        # copy indexed samples
+        for i in range(min(limit, _max_available_index(src))):
+            key = str(i)
+            if key not in src:
+                break
+            dst.create_dataset(key, data=src[key][()])
+
+def _max_available_index(h5f: h5py.File) -> int:
+    # conservative: iterate until missing
+    i = 0
+    while str(i) in h5f:
+        i += 1
+    return i
+
+def _count_index_keys(h5f: h5py.File) -> int:
+    return sum(1 for k in h5f.keys() if k.isdigit())
+
+def create_debug_subset(config, split: str, limit: int, out_dir: str):
+    """
+    Creates a debug subset directory with the same filenames that config expects:
+      out_dir/events.h5
+      out_dir/<targets...>.h5 (same basenames as in config.target_paths(split))
+      out_dir/<conditioning...>.h5 (same basename as in config.conditioning_path(split))
+    """
+    src_dir = getattr(config, f"{split}_dir")
+    os.makedirs(out_dir, exist_ok=True)
+
+    # inputs/events
+    _copy_indexed_h5(
+        src_path=os.path.join(src_dir, "events.h5"),
+        dst_path=os.path.join(out_dir, "events.h5"),
+        limit=limit,
+    )
+
+    # targets (one or multiple)
+    target_paths = config.target_paths(split)
+    if isinstance(target_paths, str):
+        target_paths = [target_paths]
+
+    all_targets = [os.path.join(src_dir, file) for file in os.listdir(src_dir) if file.endswith(".h5") and file != "events.h5"]
+
+    for tp in all_targets:
+        dst_tp = os.path.join(out_dir, os.path.basename(tp))
+        _copy_indexed_h5(tp, dst_tp, limit)
+
+    # conditioning (optional)
+    cp = config.conditioning_path(split)
+    if cp:
+        dst_cp = os.path.join(out_dir, os.path.basename(cp))
+        _copy_indexed_h5(cp, dst_cp, limit)
+
+    return out_dir

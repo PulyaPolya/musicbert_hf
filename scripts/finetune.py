@@ -49,7 +49,7 @@ from typing import List, Optional
 from transformers import Trainer, TrainingArguments
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from helpers import _load_yaml_, set_seed, load_baseline_params
+from helpers import set_seed, load_baseline_params
 
 from musicbert_hf.checkpoints import (
     load_musicbert_multitask_token_classifier_from_fairseq_checkpoint,
@@ -61,82 +61,6 @@ from musicbert_hf.metrics import compute_metrics, compute_metrics_multitask
 from musicbert_hf.models import freeze_layers
 from config import load_config
 
-
-# @dataclass
-# class Config:
-#     # data_dir should have train, valid, and test subdirectories
-#     data_dir: str
-#     output_dir_base: str
-#     checkpoint_path: str
-#     targets: str | list[str]
-#     conditioning: str | None = None
-#     log_dir: str = os.path.expanduser("~/tmp/musicbert_hf_logs")
-#     # We will always load from a checkpoint so we don't need to specify architecture
-#     # architecture: Literal["base", "tiny"] = "base"
-#     num_epochs: int = 0
-#     batch_size: int = 4
-#     learning_rate: float = 2.5e-4
-#     warmup_steps: int = 0
-#     max_steps: int = -1
-#     wandb_project: str | None = None
-#     # If None, freeze no layers; if int, freeze all layers up to and including
-#     #   the specified layer; if sequence of ints, freeze the specified layers
-#     freeze_layers: int | Sequence[int] | None = None
-
-#     # In general, we want to leave job_id as None and set automatically, but for
-#     #   local testing we can set it manually
-#     job_id: str | None = None
-#     seed: int | None = 42
-#     name: Optional[str] = None
-    
-
-#     def __post_init__(self):
-#         assert self.num_epochs is not None or self.max_steps is not None, (
-#             "Either num_epochs or max_steps must be provided"
-#         )
-#         if self.job_id is None:
-#             self.job_id = os.environ.get("SLURM_JOB_ID", None)
-#             if self.job_id is None:
-#                 # Use the current time as the job ID if not running on the cluster
-#                 self.job_id = str(int(time.time()))
-
-#         if isinstance(self.targets, str):
-#             self.targets = [self.targets]
-
-#     @property
-#     def train_dir(self) -> str:
-#         return os.path.join(self.data_dir, "train")
-
-#     @property
-#     def valid_dir(self) -> str:
-#         return os.path.join(self.data_dir, "valid")
-
-#     @property
-#     def test_dir(self) -> str:
-#         return os.path.join(self.data_dir, "test")
-
-#     @property
-#     def output_dir(self) -> str:
-#         if self.name is None:
-#             self.name = self.job_id
-#         return os.path.join(self.output_dir_base, self.name)
-
-#     def target_paths(self, split: Literal["train", "valid", "test"]) -> list[str]:
-#         return [
-#             os.path.join(self.data_dir, split, f"{target}.h5")
-#             for target in self.targets
-#         ]
-
-#     def conditioning_path(self, split: Literal["train", "valid", "test"]) -> str | None:
-#         return (
-#             None
-#             if not self.conditioning
-#             else os.path.join(self.data_dir, split, f"{self.conditioning}.h5")
-#         )
-
-#     @property
-#     def multitask(self) -> bool:
-#         return len(self.targets) > 1
     
 def get_dataset(config, split):
     data_dir = getattr(config, f"{split}_dir")
@@ -156,10 +80,6 @@ if __name__ == "__main__":
         os.environ["WANDB_PROJECT"] = config.wandb_project
     else:
         os.environ.pop("WANDB_PROJECT", None)
-        # os.environ["WANDB_DISABLED"] = "true"
-
-        # Uncomment to turn on model checkpointing (up to 100Gb)
-        # os.environ["WANDB_LOG_MODEL"] = "checkpoint"
 
     train_dataset = get_dataset(config, "train")
     valid_dataset = get_dataset(config, "valid")

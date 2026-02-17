@@ -20,8 +20,8 @@ class Config:
     num_epochs: int = 0
     batch_size: int = 4
     learning_rate: float = 2.5e-4
-    warmup_steps: int = 0
-    max_steps: int = -1
+    warmup_steps: int = 2500
+    max_steps: int = 50000
     # if saving at hf
     hf_repository: str | None = None
     hf_token: str | None = None

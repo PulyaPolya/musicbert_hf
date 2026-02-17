@@ -1,10 +1,6 @@
 """
-This script can be used to finetune a MusicBERT model on a token classification task.
-
-Config parameters are passed on the command line. They are parsed with OmegaConf and
-should have the format `key=value` (e.g., `data_dir=/path/to/data`).
-
-The required parameters are:
+This script can be used to perform an HPO (Hyperparameter Optimization) on a MusicBERT model for a token classification task.
+Config parameters are loaded from a YAML file, which should specify the following parameters:
 - `data_dir`: the directory containing the training data. This directory should have
   `train`, `valid`, and `test` subdirectories, each containing a set of `.h5` files,
   including `events.h5` featuring the octuple-encoded input and one `.h5` file for each
@@ -19,14 +15,21 @@ The required parameters are:
 - `output_dir_base`: the base directory for the output. The final output directory will
   be `output_dir_base/job_id`. If `job_id` is not explicitly set, it is the ID of the
   SLURM job if running on a cluster, or a string of the current time if not.
-- `checkpoint_path`: the path to the checkpoint to finetune from.
+- `checkpoint_path`: the path to the MUSICBERT checkpoint to finetune from (.pt).
 - `targets`: a target or list of targets to finetune on. We expect each target to have a
   corresponding `.h5` file in the `data_dir` directory. For example, if `targets` is
   `["key", "chord_quality"]`, we expect to find `key.h5` and `chord_quality.h5` in the
-  `data_dir/train` directory.
-
-For the full list of config parameters, see the `Config` dataclass below.
-
+  `data_dir/train` directory. To reproduce the results, use ["quality", "inversion", "key_pc_mode", "primary_alteration_primary_degree_secondary_alteration_secondary_degree"]
+- `max_steps`: the maximum number of training steps. 
+- `warmup_steps`: the number of warmup steps for the learning rate scheduler.
+- `seed`: the random seed for reproducibility.
+- `DEBUG`: if true, use a very small number of steps, and a small subset of data for quick testing.
+- `num_trials`: the number of Optuna trials to run.
+- `optuna_name`: the name of the Optuna study.
+- `optuna_storage`: the path to the Optuna storage (e.g., a SQLite
+    database) to use for storing the results of the trials.
+- `wandb_name`: the name of the Weights & Biases run group to log to. If not set, no logging will be done.
+- `sampler_path`: the path to a pickled Optuna sampler to use for sampling hyperparameters. If not set, a new TPESampler will be created.
 """
 
 import os

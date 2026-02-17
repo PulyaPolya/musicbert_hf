@@ -18,8 +18,6 @@ import numpy as np
 import random
 import pandas as pd
 import yaml
-from transformers import EarlyStoppingCallback, TrainerCallback
-#from transformers import T
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from torch.utils.data import Subset
 import wandb

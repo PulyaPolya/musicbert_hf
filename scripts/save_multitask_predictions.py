@@ -338,35 +338,10 @@ def main(args):
         else:
             raise ValueError(f"Output folder {output_folder} already exists")
 
-    #assert data_dir.rstrip(os.path.sep).endswith("_bin")
-
    
     target_names = args.targets
-
-
-    
-    
-    # if args.baseline:
-    #     print("loading baseline parameters")
-    #     hyperparams_dict = load_baseline_params(args.targets)
-    # else:
-        # print("evaluating the model from hpo")
-        # study = optuna.load_study(study_name="nas_layers_extended_new",                
-        #                         storage = "sqlite:///optuna_nas.db")
-        # best_trials = study.best_trials
-        # params = best_trials[3].params    # 0 is trial 35, 3 is 58
-        # hyperparams_dict = create_hyperparams_dict(args.targets, params)
-    
-    # path = Path(args.checkpoint_path)
-    # config = BertConfig.from_pretrained(path, force_download=True) # this ensures that the most
-    #                                                                             # up-to-date model is loaded (polina)
-    # config.hyperparams =hyperparams_dict
     model, config = load_model(args)
-    # if args.conditioning:
-    #     model = MusicBertMultiTaskTokenClassConditioned.from_pretrained(pretrained_model_name_or_path =path, config=config) 
-    # else:
-    #     model = MusicBertMultiTaskTokenClassification.from_pretrained(pretrained_model_name_or_path =path, config=config) 
-
+  
     test_dataset = get_dataset(args, "test")
     model.config.targets = list(args.targets)
     train_dataset = get_dataset(args, "train")
